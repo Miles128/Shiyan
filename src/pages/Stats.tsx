@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, type ReadingStats } from "../api";
+import { api } from "../api";
+import { useQuery } from "../query";
 import PageBack from "../components/PageBack";
 
 function fmtMinutes(minutes: number): string {
@@ -17,15 +17,15 @@ function fmtWords(words: number): string {
 
 /** Reading statistics: daily activity, totals and library state. */
 export default function Stats() {
-  const [stats, setStats] = useState<ReadingStats | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    void api
-      .getReadingStats()
-      .then(setStats)
-      .catch((e) => setError(String(e)));
-  }, []);
+  // Mount paints the cached stats instantly when present (shared with the
+  // Home header's learning-stats entry point only by backend, not by key —
+  // different command, different entry), then revalidates.
+  const statsQuery = useQuery(["reading-stats"], () => api.getReadingStats());
+  const stats = statsQuery.data ?? null;
+  // Surface fetch errors only when there is nothing to show (same contract
+  // as the article view: cached content is never covered by a banner).
+  const loadError = statsQuery.error == null ? null : String(statsQuery.error);
+  const error = stats === null ? loadError : null;
 
   if (error) {
     return (
@@ -42,7 +42,7 @@ export default function Stats() {
     );
   }
 
-  const maxArticles = Math.max(1, ...stats.days.map((d) => d.articles));
+  const maxMinutes = Math.max(1, ...stats.days.map((d) => d.minutes));
   const maxSourceMinutes = Math.max(
     1,
     ...stats.top_sources.map((s) => s.minutes),
@@ -100,7 +100,7 @@ export default function Stats() {
               <div className="day-bar-track">
                 <div
                   className="day-bar"
-                  style={{ height: `${(day.articles / maxArticles) * 100}%` }}
+                  style={{ height: `${(day.minutes / maxMinutes) * 100}%` }}
                 />
               </div>
               <span className="day-label">{day.date.slice(5)}</span>
@@ -108,7 +108,7 @@ export default function Stats() {
           ))}
         </div>
         <p className="muted">
-          柱高表示当天打开的文章数；悬停可看当天时长。近 14 天合计{" "}
+          柱高表示当天阅读时长；悬停可看当天篇数。近 14 天合计{" "}
           {stats.days.reduce((n, d) => n + d.articles, 0)} 篇 ·{" "}
           {fmtMinutes(stats.days.reduce((n, d) => n + d.minutes, 0))}
         </p>

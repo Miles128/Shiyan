@@ -1,3 +1,4 @@
+use crate::article_view;
 use crate::db::{self, Article, ArticleListItem, DbState, LearningStats, TranslationRow};
 use crate::error::AppError;
 use crate::feeds;
@@ -5,29 +6,7 @@ use crate::import_file;
 use crate::translate;
 use crate::vocab;
 use chrono::Datelike;
-use rusqlite::Connection;
 use tauri::{AppHandle, Emitter};
-
-#[derive(Clone, serde::Serialize, ts_rs::TS)]
-#[ts(export)]
-pub struct ArticleView {
-    pub article: Article,
-    pub paragraphs: Vec<String>,
-    pub translations: Vec<TranslationRow>,
-}
-
-pub fn load_article_view(conn: &Connection, id: &str) -> Result<Option<ArticleView>, AppError> {
-    let Some(article) = db::get_article(conn, id)? else {
-        return Ok(None);
-    };
-    let paragraphs = feeds::split_paragraphs(&article.content_text);
-    let translations = db::list_paragraph_translations(conn, id)?;
-    Ok(Some(ArticleView {
-        article,
-        paragraphs,
-        translations,
-    }))
-}
 
 /// Ranked window size for interest scoring. Wide enough that cursor pages can
 /// reach past the first few screens of a daily reading session.
@@ -40,17 +19,16 @@ const RANK_WINDOW: i64 = 800;
 pub async fn list_articles_ranked(
     app: AppHandle,
     category: Option<String>,
-    tags: Option<Vec<String>>,
     source: Option<String>,
     unread_only: Option<bool>,
     limit: Option<i64>,
     offset: Option<i64>,
     cursor_score: Option<f64>,
     cursor_id: Option<String>,
+    search: Option<String>,
 ) -> Result<Vec<ArticleListItem>, AppError> {
-    let tags = tags.unwrap_or_default();
     crate::commands::spawn_db(app, move |state| {
-        // One snapshot for the page. These four queries used to take the read
+        // One snapshot for the page. These queries used to take the read
         // lock separately, so a refresh landing in between could rank a page
         // against a half-updated profile.
         let conn = state.lock_read()?;
@@ -58,7 +36,6 @@ pub async fn list_articles_ranked(
             &conn,
             &db::ArticleQuery {
                 category: category.as_deref(),
-                tags: &tags,
                 source: source.as_deref(),
                 read_state: if unread_only.unwrap_or(false) {
                     db::ReadState::Unfinished
@@ -66,23 +43,19 @@ pub async fn list_articles_ranked(
                     db::ReadState::All
                 },
                 liked_only: false,
+                search: search.as_deref(),
             },
             Some(RANK_WINDOW),
             Some(0),
         )?;
         let (source_opens, category_opens) = db::affinity_open_counts(&conn)?;
-        let (tag_weights, tag_doc_counts, tagged_docs) = db::tag_profile(&conn)?;
+        let term_weights =
+            crate::rank::build_term_weights(&db::engaged_titles(&conn)?);
         let (source_priority, category_priority_max) =
             (db::source_priority_map(&conn)?, db::category_priority_max(&conn)?);
         drop(conn);
-        let affinity = crate::rank::Affinity::from_maps(
-            source_opens,
-            category_opens,
-            tag_weights,
-            tag_doc_counts,
-            tagged_docs,
-        )
-        .with_source_priority(source_priority, category_priority_max);
+        let affinity = crate::rank::Affinity::from_maps(source_opens, category_opens, term_weights)
+            .with_source_priority(source_priority, category_priority_max);
         let now = chrono::Utc::now();
         let day_key = i64::from(now.num_days_from_ce());
         let ranked = crate::rank::rank_articles(items, &affinity, now, day_key);
@@ -102,14 +75,13 @@ pub async fn list_articles_ranked(
 pub async fn list_library(
     app: AppHandle,
     category: Option<String>,
-    tags: Option<Vec<String>>,
     source: Option<String>,
     read_state: Option<String>,
     liked_only: Option<bool>,
     limit: Option<i64>,
     offset: Option<i64>,
+    search: Option<String>,
 ) -> Result<Vec<ArticleListItem>, AppError> {
-    let tags = tags.unwrap_or_default();
     let read_state = match read_state.as_deref() {
         Some("unread") => db::ReadState::Unread,
         Some("reading") => db::ReadState::Reading,
@@ -123,10 +95,10 @@ pub async fn list_library(
             &conn,
             &db::ArticleQuery {
                 category: category.as_deref(),
-                tags: &tags,
                 source: source.as_deref(),
                 read_state,
                 liked_only: liked_only.unwrap_or(false),
+                search: search.as_deref(),
             },
             limit,
             offset,
@@ -141,19 +113,6 @@ pub async fn list_library(
 pub async fn translate_plain_text(text: String) -> Result<String, AppError> {
     let cfg = crate::config::load_config()?;
     crate::commands::spawn_blocking_err(move || vocab::translate_text(&cfg, &text)).await
-}
-
-/// Backfill topic tags (bounded per call; refresh also runs a batch).
-#[tauri::command]
-pub async fn fill_missing_tags(app: AppHandle, limit: Option<usize>) -> Result<usize, AppError> {
-    let cfg = crate::config::load_config()?;
-    if cfg.api_key.trim().is_empty() {
-        return Ok(0);
-    }
-    crate::commands::spawn_db(app, move |state| {
-        feeds::fill_missing_tags(state, &cfg, limit.unwrap_or(200), |_, _| {})
-    })
-    .await
 }
 
 #[tauri::command]
@@ -186,9 +145,27 @@ pub fn set_article_liked(
 pub fn get_article_view(
     state: tauri::State<'_, DbState>,
     id: String,
-) -> Result<Option<ArticleView>, AppError> {
-    let conn = state.lock_read()?;
-    load_article_view(&conn, &id)
+) -> Result<Option<article_view::ArticleView>, AppError> {
+    // Fetch the row under a short read lock, reflow (CPU work) without holding
+    // the lock, then fetch cached translations. Keeps long articles from
+    // blocking other readers.
+    let article = {
+        let conn = state.lock_read()?;
+        db::get_article(&conn, &id)?
+    };
+    let Some(article) = article else {
+        return Ok(None);
+    };
+    let paragraphs = crate::feeds::split_paragraphs(&article.content_text);
+    let translations = {
+        let conn = state.lock_read()?;
+        db::list_paragraph_translations(&conn, &id)?
+    };
+    Ok(Some(article_view::ArticleView {
+        article,
+        paragraphs,
+        translations,
+    }))
 }
 
 #[tauri::command]

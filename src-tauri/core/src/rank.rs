@@ -8,17 +8,15 @@ use crate::db::ArticleListItem;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
-/// Aggregated open counts by source / category, plus the tag interest profile.
+/// Aggregated open counts by source / category, plus the local semantic
+/// profile (title terms from engaged articles — no LLM involved).
 #[derive(Debug, Default, Clone)]
 pub struct Affinity {
     pub source_opens: HashMap<String, i64>,
     pub category_opens: HashMap<String, i64>,
-    /// tag → engagement weight (liked = 2, read-to-end = 1).
-    pub tag_weights: HashMap<String, f64>,
-    /// tag → number of tagged articles that carry it (IDF denominator).
-    pub tag_doc_counts: HashMap<String, i64>,
-    /// number of tagged articles.
-    pub tagged_docs: i64,
+    /// term → engagement weight, accumulated from titles the learner engaged
+    /// with (liked = 2, read-to-end = 1). Semantic profile input.
+    pub term_weights: HashMap<String, f64>,
     /// feed display name → user-assigned sidebar priority within its own
     /// category (higher = dragged nearer the top of that category). Absent or 0
     /// means the learner never ordered this source.
@@ -33,16 +31,12 @@ impl Affinity {
     pub fn from_maps(
         source_opens: HashMap<String, i64>,
         category_opens: HashMap<String, i64>,
-        tag_weights: HashMap<String, f64>,
-        tag_doc_counts: HashMap<String, i64>,
-        tagged_docs: i64,
+        term_weights: HashMap<String, f64>,
     ) -> Self {
         Self {
             source_opens,
             category_opens,
-            tag_weights,
-            tag_doc_counts,
-            tagged_docs,
+            term_weights,
             source_priority: HashMap::new(),
             category_priority_max: HashMap::new(),
         }
@@ -59,39 +53,6 @@ impl Affinity {
         self.category_priority_max = category_priority_max;
         self
     }
-
-    /// IDF: rare tags carry more signal than tags on almost every article.
-    pub fn tag_idf(&self, tag: &str) -> f64 {
-        let df = *self.tag_doc_counts.get(tag).unwrap_or(&0);
-        ((1.0 + self.tagged_docs as f64) / (1.0 + df as f64)).ln().max(0.0)
-    }
-
-    /// Total weighted interest mass of the learner's tag profile.
-    pub fn tag_profile_mass(&self) -> f64 {
-        self.tag_weights
-            .iter()
-            .map(|(tag, w)| w * self.tag_idf(tag))
-            .sum()
-    }
-
-    /// Cosine-like tag similarity in [0, 1]: how much of the learner's
-    /// weighted interest this article's tags cover.
-    pub fn tag_similarity(&self, tags: &[String]) -> f64 {
-        if tags.is_empty() {
-            return 0.0;
-        }
-        let mass = self.tag_profile_mass();
-        if mass <= 0.0 {
-            return 0.0;
-        }
-        let hit: f64 = tags
-            .iter()
-            .map(|tag| {
-                self.tag_weights.get(tag).copied().unwrap_or(0.0) * self.tag_idf(tag)
-            })
-            .sum();
-        (hit / mass).min(1.0)
-    }
 }
 
 /// Log-scaled affinity in [0, 1]; 10 opens saturate.
@@ -101,6 +62,46 @@ pub fn affinity_score(opens: i64) -> f64 {
     } else {
         ((opens + 1) as f64).ln() / 10f64.ln()
     }
+}
+
+/// English stopwords + reporting verbs: frequent in headlines but carrying no
+/// topic signal. Kept small and obvious — this is a heuristic, not NLP.
+const STOPWORDS: &[&str] = &[
+    "the", "a", "an", "and", "or", "of", "to", "in", "on", "for", "with", "as",
+    "at", "by", "from", "is", "are", "was", "were", "be", "been", "it", "its",
+    "that", "this", "these", "those", "will", "would", "could", "should",
+    "has", "have", "had", "not", "but", "they", "their", "them", "he", "she",
+    "we", "you", "s", "t", "say", "says", "said", "new", "over", "after",
+    "before", "more", "most", "than", "into", "out", "up", "all", "also",
+    "just", "like", "get", "amid", "among", "between", "while", "without",
+    "what", "when", "how", "why", "who",
+];
+
+/// Topic-bearing terms of a headline/body: lowercase alphanumeric tokens,
+/// ≥2 chars, no pure digits, no stopwords. Single set per article — repeats
+/// within one article don't count twice.
+pub fn content_terms(text: &str) -> std::collections::HashSet<String> {
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| {
+            t.len() >= 2
+                && !t.chars().all(|c| c.is_ascii_digit())
+                && !STOPWORDS.contains(t)
+        })
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Build the semantic profile: accumulate engagement weights per title term.
+/// `engaged` is (title, weight) with liked = 2.0, read-to-end = 1.0.
+pub fn build_term_weights(engaged: &[(String, f64)]) -> HashMap<String, f64> {
+    let mut weights = HashMap::new();
+    for (title, w) in engaged {
+        for term in content_terms(title) {
+            *weights.entry(term).or_insert(0.0) += w;
+        }
+    }
+    weights
 }
 
 /// Sidebar-priority bonus in [0, 1]: the learner ranked this source within its
@@ -203,11 +204,6 @@ pub fn article_rank_score(
         score += 2.5;
     }
     score += word_fit(article.word_count);
-    // Semantic profile: tags the learner engages with, IDF-weighted so
-    // generic tags don't dominate. Only active once a profile exists.
-    if affinity.tag_profile_mass() > 0.0 {
-        score += 0.8 * affinity.tag_similarity(&article.tags);
-    }
     if article.open_count == 0 {
         score += exploration_jitter(&article.id, day_key);
     } else {
@@ -224,14 +220,51 @@ pub fn article_rank_score(
 /// Score + sort a window of list items in place (descending score, id as a
 /// stable tie-break so cursor pagination has a total order), stamping
 /// `rank_score` for the frontend to pass through.
+///
+/// The semantic bonus is computed here (not in `article_rank_score`) because
+/// IDF needs the whole window: rare-among-candidates profile terms count more
+/// than terms every article carries.
 pub fn rank_articles(
     mut items: Vec<ArticleListItem>,
     affinity: &Affinity,
     now: DateTime<Utc>,
     day_key: i64,
 ) -> Vec<ArticleListItem> {
-    for item in items.iter_mut() {
-        item.rank_score = article_rank_score(item, affinity, now, day_key);
+    // Document frequency over the window (title + excerpt terms per article).
+    let mut doc_counts: HashMap<String, i64> = HashMap::new();
+    let mut item_terms: Vec<std::collections::HashSet<String>> = Vec::with_capacity(items.len());
+    for item in &items {
+        let mut terms = content_terms(&item.title);
+        terms.extend(content_terms(&item.excerpt));
+        for t in &terms {
+            *doc_counts.entry(t.clone()).or_insert(0) += 1;
+        }
+        item_terms.push(terms);
+    }
+    let docs = items.len() as f64;
+    let idf = |term: &str| -> f64 {
+        let df = *doc_counts.get(term).unwrap_or(&0) as f64;
+        ((1.0 + docs) / (1.0 + df)).ln().max(0.0)
+    };
+    let mass: f64 = affinity
+        .term_weights
+        .iter()
+        .map(|(term, w)| w * idf(term))
+        .sum();
+    for (item, terms) in items.iter_mut().zip(item_terms) {
+        let mut score = article_rank_score(item, affinity, now, day_key);
+        // Semantic profile: engaged-title terms, IDF-weighted so generic
+        // terms don't dominate. Only active once a profile exists.
+        if mass > 0.0 {
+            let hit: f64 = terms
+                .iter()
+                .map(|term| {
+                    affinity.term_weights.get(term).copied().unwrap_or(0.0) * idf(term)
+                })
+                .sum();
+            score += 0.8 * (hit / mass).min(1.0);
+        }
+        item.rank_score = score;
     }
     items.sort_by(|a, b| {
         b.rank_score
@@ -246,16 +279,30 @@ pub fn rank_articles(
 /// shown item) returns everything strictly after it, so inserts above the
 /// cursor no longer shift later pages; without a cursor the legacy offset
 /// window applies.
+///
+/// Score comparison is tolerance-based: `rank_score` crosses a JSON
+/// round-trip between pages, and a 1ulp drift on an exact `==` used to skip
+/// or repeat the boundary item. Within tolerance the `id` tiebreak decides.
 pub fn page_ranked(
     items: Vec<ArticleListItem>,
     cursor: Option<(f64, String)>,
     offset: usize,
     limit: usize,
 ) -> Vec<ArticleListItem> {
+    /// Two scores from the same computation that differ only by a JSON
+    /// round-trip land within a few ulps; 1e-9 relative covers that without
+    /// blurring genuinely distinct ranks.
+    fn same_score(a: f64, b: f64) -> bool {
+        if a == b {
+            return true;
+        }
+        let scale = a.abs().max(b.abs()).max(1.0);
+        (a - b).abs() <= 1e-9 * scale
+    }
     let start = match cursor {
         Some((score, id)) => items
             .iter()
-            .position(|a| a.rank_score < score || (a.rank_score == score && a.id > id))
+            .position(|a| a.rank_score < score && !same_score(a.rank_score, score) || (same_score(a.rank_score, score) && a.id > id))
             .unwrap_or(items.len()),
         None => offset.min(items.len()),
     };
@@ -286,7 +333,6 @@ mod tests {
             dwell_ms: 0,
             read_completed: false,
             liked: false,
-            tags: vec![],
         }
     }
 
@@ -367,72 +413,6 @@ mod tests {
     }
 
     #[test]
-    fn tag_profile_similarity_is_idf_weighted() {
-        // Learner engaged with economy (weight 3) and weather (weight 1).
-        // "ai" is on every article (low IDF), "economy" is rare (high IDF).
-        let affinity = Affinity::from_maps(
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::from([("economy".to_string(), 3.0), ("weather".to_string(), 1.0)]),
-            HashMap::from([
-                ("economy".to_string(), 2),
-                ("weather".to_string(), 10),
-                ("ai".to_string(), 100),
-            ]),
-            100,
-        );
-        let economy_match = affinity.tag_similarity(&["economy".to_string()]);
-        let weather_match = affinity.tag_similarity(&["weather".to_string()]);
-        assert!(
-            economy_match > weather_match,
-            "rare interest beats common one: {economy_match} vs {weather_match}"
-        );
-        assert_eq!(affinity.tag_similarity(&[]), 0.0);
-        assert_eq!(affinity.tag_similarity(&["sports".to_string()]), 0.0);
-        assert!(economy_match <= 1.0);
-    }
-
-    #[test]
-    fn tag_similarity_boosts_matching_articles() {
-        let now = Utc::now();
-        let mut affinity = Affinity::default();
-        affinity.tag_weights.insert("semiconductors".into(), 4.0);
-        affinity.tag_doc_counts.insert("semiconductors".into(), 3);
-        affinity.tagged_docs = 50;
-
-        let mut matching = item("a");
-        matching.tags = vec!["semiconductors".into()];
-        let plain = item("b");
-
-        // open_count > 0 disables the exploration jitter so the assertion
-        // measures the tag bonus deterministically, not hash luck.
-        matching.open_count = 1;
-        let mut plain_opened = plain;
-        plain_opened.open_count = 1;
-
-        let score_match = article_rank_score(&matching, &affinity, now, 1);
-        let score_plain = article_rank_score(&plain_opened, &affinity, now, 1);
-        assert!(score_match > score_plain);
-        assert!((score_match - score_plain) > 0.5);
-    }
-
-    #[test]
-    fn no_profile_means_no_tag_bonus() {
-        let now = Utc::now();
-        let affinity = Affinity::default();
-        let plain = item("a");
-        let mut tagged = item("a");
-        tagged.tags = vec!["economy".into()];
-        // Same id → same jitter, so the only possible delta is the tag bonus.
-        assert!(
-            (article_rank_score(&tagged, &affinity, now, 1)
-                - article_rank_score(&plain, &affinity, now, 1))
-            .abs()
-                < 1e-9
-        );
-    }
-
-    #[test]
     fn ranking_is_descending_and_stamps_scores() {
         let now = Utc::now();
         let affinity = Affinity::default();
@@ -500,6 +480,24 @@ mod tests {
         assert_eq!(
             offset_page.iter().map(|i| i.id.clone()).collect::<Vec<_>>(),
             vec!["b", "c"]
+        );
+    }
+
+    #[test]
+    fn cursor_tolerates_json_round_trip_drift() {
+        let ranked = vec![
+            scored("fresh", 3.0),
+            scored("b", 2.0),
+            scored("c", 2.0),
+            scored("d", 1.0),
+        ];
+        // Simulate a 1ulp drift on the score coming back from the frontend.
+        let drifted = 2.0 + f64::EPSILON;
+        let page = page_ranked(ranked, Some((drifted, "b".into())), 0, 10);
+        assert_eq!(
+            page.iter().map(|i| i.id.clone()).collect::<Vec<_>>(),
+            vec!["c", "d"],
+            "1ulp drift must not skip or repeat the boundary item"
         );
     }
 
@@ -578,5 +576,61 @@ mod tests {
         assert!(score_fam > score_other);
         // Identical except source → gap comes purely from affinity × freshness.
         assert!((score_fam - score_other) > 0.5);
+    }
+
+    #[test]
+    fn content_terms_drop_stopwords_digits_and_singles() {
+        let terms = content_terms("The Fed holds rates steady in 2026, officials say");
+        assert!(terms.contains("fed"));
+        assert!(terms.contains("rates"));
+        assert!(terms.contains("officials"));
+        assert!(!terms.contains("the"), "stopword");
+        assert!(!terms.contains("in"), "stopword");
+        assert!(!terms.contains("2026"), "pure digits");
+        assert!(!terms.contains("say"), "reporting verb");
+    }
+
+    #[test]
+    fn term_profile_accumulates_engagement_weights() {
+        let weights = build_term_weights(&[
+            ("Central bank holds rates".into(), 2.0),
+            ("Bank earnings beat estimates".into(), 1.0),
+        ]);
+        assert_eq!(weights.get("bank"), Some(&3.0));
+        assert_eq!(weights.get("rates"), Some(&2.0));
+        assert!(!weights.contains_key("the"));
+    }
+
+    fn titled(id: &str, title: &str) -> ArticleListItem {
+        let mut i = item(id);
+        i.title = title.into();
+        i.fetched_at = Utc::now().to_rfc3339();
+        i.open_count = 1;
+        i
+    }
+
+    #[test]
+    fn semantic_bonus_boosts_profile_matching_articles() {
+        let now = Utc::now();
+        let mut affinity = Affinity::default();
+        affinity.term_weights = build_term_weights(&[
+            ("Central bank holds interest rates".into(), 2.0),
+        ]);
+        let matching = titled("m", "Interest rates and the central bank outlook");
+        let plain = titled("p", "Night trains return across quiet borders");
+        let ranked = rank_articles(vec![plain, matching], &affinity, now, 1);
+        assert_eq!(ranked[0].id, "m");
+        assert!(ranked[0].rank_score - ranked[1].rank_score > 0.2);
+    }
+
+    #[test]
+    fn no_profile_means_no_semantic_bonus() {
+        let now = Utc::now();
+        let affinity = Affinity::default();
+        let a = titled("a", "Central bank holds interest rates");
+        let b = titled("b", "Central bank holds interest rates");
+        let ranked = rank_articles(vec![a, b], &affinity, now, 1);
+        // Same content, empty profile → identical scores, id decides.
+        assert!((ranked[0].rank_score - ranked[1].rank_score).abs() < 1e-9);
     }
 }

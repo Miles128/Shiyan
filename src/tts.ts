@@ -41,6 +41,11 @@ function browserSynthesis(): SpeechSynthesisLike | null {
   return window.speechSynthesis as unknown as SpeechSynthesisLike;
 }
 
+/** False on engines without Web Speech (playback would silently do nothing). */
+export function ttsEngineAvailable(): boolean {
+  return browserSynthesis() !== null;
+}
+
 function browserUtterance(text: string): SpeechSynthesisUtteranceLike {
   return new SpeechSynthesisUtterance(text) as unknown as SpeechSynthesisUtteranceLike;
 }

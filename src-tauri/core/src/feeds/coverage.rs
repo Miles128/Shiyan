@@ -16,7 +16,7 @@ use super::filters::{
     looks_like_paywall, looks_truncated, rss_is_full_text, rss_trust_chars, PageFailure,
 };
 use super::extract::html_to_text;
-use super::net::{ensure_public_http_url, read_limited_bytes, HTTP};
+use super::net::{ensure_public_http_url, http_client, read_limited_bytes};
 use crate::db::{self, FeedSource};
 use crate::error::AppError;
 use chrono::Utc;
@@ -122,6 +122,13 @@ fn audit_one_feed(
         None
     };
     let mut sampled = 0usize;
+    let http = match http_client() {
+        Ok(http) => http,
+        Err(_) => {
+            cov.note(FEED_UNREADABLE, "");
+            return cov;
+        }
+    };
 
     for entry in parsed.entries.into_iter().take(ENTRIES_PER_FEED) {
         let raw_url = entry_url(&entry);
@@ -171,7 +178,7 @@ fn audit_one_feed(
             sampled += 1;
             cov.pages_sampled += 1;
 
-            let page_text = match extract_page(&HTTP, &url) {
+            let page_text = match extract_page(&http, &url) {
                 Ok(page) => Some(page.text),
                 Err(err) => {
                     cov.note(err.failure.label(), &url);
@@ -212,7 +219,8 @@ fn audit_one_feed(
 
 fn feed_document(url: &str) -> Result<feed_rs::model::Feed, AppError> {
     ensure_public_http_url(url)?;
-    let resp = HTTP.get(url).send()?.error_for_status()?;
+    let http = http_client()?;
+    let resp = http.get(url).send()?.error_for_status()?;
     let bytes = read_limited_bytes(resp)?;
     parser::parse(&bytes[..]).map_err(|e| AppError::msg(e.to_string()))
 }

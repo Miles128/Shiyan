@@ -26,7 +26,13 @@ pub(crate) fn seed_feed_categories(conn: &Connection) -> Result<(), AppError> {
 }
 
 pub(crate) fn seed_feeds(conn: &Connection) -> Result<(), AppError> {
-    let seeds = curated_feeds();
+    let seeds = match curated_feeds() {
+        Ok(seeds) => seeds,
+        Err(e) => {
+            eprintln!("curated feeds seed skipped: {e}");
+            return Ok(());
+        }
+    };
     let removed = removed_feed_ids(conn)?;
     // Insert newly curated feeds; IGNORE keeps existing enable/disable.
     // Tombstoned ids (removed by the one-shot dead-feed cleanup) stay gone.
@@ -187,12 +193,13 @@ pub fn add_feed_category(conn: &Connection, label: &str) -> Result<FeedCategory,
         "INSERT INTO feed_categories (id, label, builtin) VALUES (?1,?2,0)",
         params![id, label],
     )
-    .map_err(|e| {
-        if e.to_string().contains("UNIQUE") {
-            "分类已存在".into()
-        } else {
-            e.to_string()
+    .map_err(|e| match &e {
+        rusqlite::Error::SqliteFailure(err, _) if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE as i32
+            || err.code == rusqlite::ErrorCode::ConstraintViolation => {
+            AppError::msg("分类已存在")
         }
+        _ if e.to_string().contains("UNIQUE") => AppError::msg("分类已存在"),
+        _ => AppError::from(e),
     })?;
     Ok(FeedCategory {
         id,
@@ -226,6 +233,10 @@ pub fn subscribe_feed(
     if name.is_empty() || url.is_empty() || category.is_empty() {
         return Err(AppError::msg("名称、分类与 URL 不能为空"));
     }
+    // Same SSRF guard as refresh/validate: a direct `subscribe_feed` call must
+    // not be able to store localhost / LAN / non-http targets that only blow
+    // up later at refresh time.
+    crate::feeds::net::ensure_public_http_url(url)?;
     if get_feed_category(conn, category)?.is_none() {
         return Err(AppError::msg(format!("未知分类：{category}")));
     }

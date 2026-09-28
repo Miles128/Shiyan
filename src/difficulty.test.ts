@@ -8,6 +8,7 @@ import {
   difficultyClassName,
   difficultyFromScore,
   difficultyLabel,
+  DifficultyScoreCache,
   sentenceFactor,
   tokenizeWords,
   wordDifficultyWeight,
@@ -143,5 +144,37 @@ describe("articleDifficulty", () => {
   it("exposes label and css class", () => {
     expect(difficultyLabel("hardest")).toBe("极难");
     expect(difficultyClassName("hard")).toContain("d-hard");
+  });
+});
+
+describe("DifficultyScoreCache", () => {
+  it("hits on identical excerpt, misses when the body changed", () => {
+    const cache = new DifficultyScoreCache();
+    expect(cache.get("a", "body v1")).toBeUndefined();
+    cache.set("a", "body v1", 0.5);
+    expect(cache.get("a", "body v1")).toEqual({
+      excerpt: "body v1",
+      score: 0.5,
+    });
+    // Same id, refreshed body → miss (a re-score is due).
+    expect(cache.get("a", "body v2")).toBeUndefined();
+  });
+
+  it("evicts oldest-inserted beyond the cap", () => {
+    const cache = new DifficultyScoreCache(2);
+    cache.set("a", "a", 1);
+    cache.set("b", "b", 2);
+    cache.set("c", "c", 3);
+    expect(cache.size).toBe(2);
+    expect(cache.get("a", "a")).toBeUndefined();
+    expect(cache.get("c", "c")?.score).toBe(3);
+  });
+
+  it("clear drops everything", () => {
+    const cache = new DifficultyScoreCache();
+    cache.set("a", "a", 1);
+    cache.clear();
+    expect(cache.size).toBe(0);
+    expect(cache.get("a", "a")).toBeUndefined();
   });
 });

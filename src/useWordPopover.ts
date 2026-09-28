@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import type { WordPopoverShellProps } from "./components/WordPopoverShell";
 import type { Popover } from "./components/SelectionPopover";
@@ -10,7 +10,8 @@ import { ensureDetailsLoaded, lookupDetail, prepareLookup } from "./wordResolve"
 type TtsState = {
   speaking: boolean;
   speakTarget: SpeakTarget | null;
-  startSpeak: (target: SpeakTarget, chunks: string[]) => void;
+  /** Returns false when the engine is unavailable (caller shows feedback). */
+  startSpeak: (target: SpeakTarget, chunks: string[]) => boolean;
   stopSpeak: () => void;
 };
 
@@ -42,7 +43,9 @@ export function useWordPopover(config: WordPopoverConfig) {
   const [popover, setPopover] = useState<Popover | null>(null);
   // Latest config in a ref so the returned callbacks stay stable.
   const cfg = useRef(config);
-  cfg.current = config;
+  useEffect(() => {
+    cfg.current = config;
+  }, [config]);
 
   const closePopover = useCallback(() => setPopover(null), []);
   useEscapeKey(popover != null, closePopover);
@@ -105,7 +108,9 @@ export function useWordPopover(config: WordPopoverConfig) {
       return;
     }
     if (!text.trim()) return;
-    startSpeak({ kind: "word" }, [text]);
+    if (!startSpeak({ kind: "word" }, [text])) {
+      cfg.current.onError("当前环境无语音引擎，无法朗读");
+    }
   }, []);
 
   const addToVocab = useCallback(async () => {
@@ -137,7 +142,7 @@ export function useWordPopover(config: WordPopoverConfig) {
         contextSentence: c.contextFor(popover.source, popover.text),
         articleId: c.articleId,
       });
-      c.onSuccess?.(`已加入短语组合：${popover.text}`);
+      c.onSuccess?.(`已加入短语：${popover.text}`);
       setPopover(null);
     } catch (e) {
       c.onError(String(e));

@@ -14,8 +14,6 @@ type Props = {
   difficulty: DifficultyLevel | null;
   /** Show the source name (library view). */
   showSource?: boolean;
-  /** Show topic tags; the home list hides them unless 标签 is toggled on. */
-  showTags?: boolean;
   /** Keyboard navigation highlight (j/k on the home page). */
   highlighted?: boolean;
 };
@@ -25,7 +23,6 @@ export default function ArticleRow({
   article,
   difficulty,
   showSource,
-  showTags = true,
   highlighted = false,
 }: Props) {
   const blurb = articleListBlurb(article);
@@ -54,9 +51,6 @@ export default function ArticleRow({
           </p>
         ) : null}
         {blurb ? <p className="article-summary-zh">{blurb}</p> : null}
-        {showTags && article.tags.length > 0 ? (
-          <p className="article-tags muted">{article.tags.join(" · ")}</p>
-        ) : null}
       </Link>
     </li>
   );

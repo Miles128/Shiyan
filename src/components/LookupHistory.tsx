@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type LookupEntry } from "../api";
+import { fetchQuery, invalidateQueries } from "../query";
 import { useVocab } from "../store";
 import { normalizeKey } from "../wordLevels";
 import { useToast } from "./Toaster";
@@ -12,14 +13,41 @@ export default function LookupHistory() {
   const [q, setQ] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [added, setAdded] = useState<Set<number>>(new Set());
+  /** Terms already in the word/phrase libraries (so rows render 已在库). */
+  const [inLibrary, setInLibrary] = useState<Set<string>>(new Set());
   const { refreshLearningTerms, markKnown: storeMarkKnown, refreshKnownTerms } = useVocab();
   const toast = useToast();
 
+  // Monotonic guard: fast typing fires overlapping loads for different
+  // queries ("a" vs "ab"); only the newest may paint. (The effect's `alive`
+  // flag only cancels the debounce timer, not an in-flight request.)
+  const loadSeq = useRef(0);
   const load = useCallback(async (search: string) => {
+    const seq = ++loadSeq.current;
     setError(null);
     try {
-      setEntries(await api.listLookups(search || undefined, 200, 0));
+      // Read through the shared cache: repeat searches dedup, and the
+      // learning-list reads populate the MemoryLibrary list-tab entries.
+      const [rows, words, phrases] = await Promise.all([
+        fetchQuery(["lookups", search, 200, 0], () =>
+          api.listLookups(search || undefined, 200, 0),
+        ),
+        fetchQuery(["memory", "word", "learning"], () =>
+          api.listMemory("word", "learning"),
+        ).catch(() => []),
+        fetchQuery(["memory", "phrase", "learning"], () =>
+          api.listMemory("phrase", "learning"),
+        ).catch(() => []),
+      ]);
+      if (seq !== loadSeq.current) return;
+      setEntries(rows);
+      setInLibrary(
+        new Set(
+          [...words, ...phrases].map((v) => normalizeKey(v.term)),
+        ),
+      );
     } catch (e) {
+      if (seq !== loadSeq.current) return;
       setError(String(e));
     }
   }, []);
@@ -37,20 +65,23 @@ export default function LookupHistory() {
     };
   }, [load, q]);
 
-  async function addToVocab(entry: LookupEntry) {
+  async function addToVocab(entry: LookupEntry, kind: "word" | "phrase") {
     try {
       await api.addMemory({
-        kind: "word",
+        kind,
         term: entry.term,
         contextSentence: entry.context,
         articleId: entry.article_id,
         definitionZh: null,
       });
       setAdded((prev) => new Set(prev).add(entry.id));
-      toast.ok(`已加入生词库：${entry.term}`);
+      setInLibrary((prev) => new Set(prev).add(normalizeKey(entry.term)));
+      toast.ok(kind === "phrase" ? `已加入短语：${entry.term}` : `已加入生词库：${entry.term}`);
+      // Bust the learning-list entries so the library tabs paint fresh.
+      invalidateQueries(["memory"]);
       void refreshLearningTerms();
     } catch (e) {
-      toast.err(String(e));
+      setError(`加入${kind === "phrase" ? "短语" : "生词库"}失败：${String(e)}`);
     }
   }
 
@@ -59,9 +90,9 @@ export default function LookupHistory() {
       await storeMarkKnown(normalizeKey(entry.term));
       setAdded((prev) => new Set(prev).add(entry.id));
       void refreshKnownTerms();
-      toast.ok(`已标记认识：${entry.term}`);
+      toast.ok(`已标为认识：${entry.term}`);
     } catch (e) {
-      toast.err(String(e));
+      toast.err(`标为已认识失败：${String(e)}`);
     }
   }
 
@@ -69,6 +100,8 @@ export default function LookupHistory() {
     try {
       await api.deleteLookup(entry.id);
       setEntries((prev) => prev.filter((e) => e.id !== entry.id));
+      // Keep the cache from re-serving the deleted row on next mount.
+      invalidateQueries(["lookups"]);
     } catch (e) {
       setError(String(e));
     }
@@ -79,6 +112,7 @@ export default function LookupHistory() {
     try {
       await api.clearLookups();
       setEntries([]);
+      invalidateQueries(["lookups"]);
     } catch (e) {
       setError(String(e));
     }
@@ -111,21 +145,28 @@ export default function LookupHistory() {
             </div>
             {entry.context && <p className="context">“{entry.context}”</p>}
             <div className="row-actions">
-              {added.has(entry.id) ? (
-                <span className="muted">已处理</span>
+              {added.has(entry.id) || inLibrary.has(normalizeKey(entry.term)) ? (
+                <span className="muted">
+                  {inLibrary.has(normalizeKey(entry.term)) ? "已在库" : "已处理"}
+                </span>
               ) : (
                 <>
                   <button
                     className="btn small"
-                    onClick={() => void addToVocab(entry)}
+                    onClick={() =>
+                      void addToVocab(
+                        entry,
+                        /\s/.test(entry.term.trim()) ? "phrase" : "word",
+                      )
+                    }
                   >
-                    加入生词库
+                    {/\s/.test(entry.term.trim()) ? "加入短语" : "加入生词库"}
                   </button>
                   <button
                     className="btn small"
                     onClick={() => void markKnown(entry)}
                   >
-                    标记已知
+                    标为已认识
                   </button>
                 </>
               )}

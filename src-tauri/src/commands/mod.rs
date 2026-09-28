@@ -15,6 +15,15 @@ use crate::db::DbState;
 use crate::error::AppError;
 use tauri::{AppHandle, Manager};
 
+/// True while a `refresh_feeds` run holds the refresh guard. `backup_database`
+/// consults it to refuse a concurrent VACUUM (5B: 刷新中禁用备份，确定性强).
+pub(crate) static REFRESHING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+pub(crate) fn is_refreshing() -> bool {
+    REFRESHING.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 /// Run blocking DB/network work off the UI thread, with `DbState` already resolved.
 pub async fn spawn_db<T, F>(app: AppHandle, f: F) -> Result<T, AppError>
 where

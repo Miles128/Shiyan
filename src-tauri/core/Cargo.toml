@@ -1,0 +1,22 @@
+[package]
+name = "shiyan-core"
+version = "0.1.0"
+description = "Shiyan business core: SQLite repositories, RSS pipeline, LLM clients, ranking, SRS — tauri-free by construction"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+feed-rs = "2.3"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+regex = "1"
+thiserror = "2"
+html2text = "0.13"
+readability = { version = "0.3", default-features = false }
+url = "2"
+pdf-extract = "0.12.0"
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+ts-rs = "10"

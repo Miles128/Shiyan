@@ -10,7 +10,6 @@ mod feeds;
 mod known;
 mod lookups;
 mod memory;
-mod sentences;
 mod translations;
 
 pub use articles::*;
@@ -18,7 +17,6 @@ pub use curated_feeds::*;
 pub use known::*;
 pub use lookups::*;
 pub use memory::*;
-pub use sentences::*;
 pub use feeds::*;
 pub use translations::*;
 
@@ -39,10 +37,11 @@ pub struct DbState {
 }
 
 impl DbState {
-    /// Open both connections. Migrations are idempotent, so opening twice is safe.
+    /// Open both connections. Migrations + seeds run once on the write
+    /// connection; the read connection only applies PRAGMAs.
     pub fn open(app_data: PathBuf) -> Result<Self, AppError> {
-        let write = open_db(app_data.clone())?;
-        let read = open_db(app_data)?;
+        let write = open_db(app_data.clone(), true)?;
+        let read = open_db(app_data, false)?;
         Ok(Self {
             write: Mutex::new(write),
             read: Mutex::new(read),
@@ -101,9 +100,6 @@ pub struct Article {
     pub read_completed: bool,
     #[serde(default)]
     pub liked: bool,
-    /// Lowercase English topic tags from card translation (semantic profile input).
-    #[serde(default)]
-    pub tags: Vec<String>,
 }
 
 /// Home-list row: excerpt only. Full body stays on `Article` / get_article.
@@ -141,9 +137,6 @@ pub struct ArticleListItem {
     pub read_completed: bool,
     #[serde(default)]
     pub liked: bool,
-    /// Lowercase English topic tags (for filtering + interest profile).
-    #[serde(default)]
-    pub tags: Vec<String>,
 }
 
 /// One day of reading activity (UTC date, `YYYY-MM-DD`).
@@ -437,12 +430,24 @@ pub fn validate_backup_file(path: &std::path::Path) -> Result<i64, AppError> {
 /// If a restore file was staged (via restore_database), swap it in BEFORE any
 /// connections open. The current database is kept as `*.pre-restore.bak`.
 /// Returns the backup path when a swap happened.
+///
+/// A corrupt staged file must never brick the next launch: validation failure
+/// quarantines the pending file (`*.pending-restore.invalid`) and startup
+/// continues with the existing database.
 pub fn apply_pending_restore(app_data: &std::path::Path) -> Result<Option<PathBuf>, AppError> {
     let pending = pending_restore_path(app_data);
     if !pending.exists() {
         return Ok(None);
     }
-    validate_backup_file(&pending)?;
+    if let Err(e) = validate_backup_file(&pending) {
+        let invalid = pending.with_extension("pending-restore.invalid");
+        let _ = std::fs::remove_file(&invalid);
+        if std::fs::rename(&pending, &invalid).is_err() {
+            let _ = std::fs::remove_file(&pending);
+        }
+        eprintln!("staged restore failed validation ({e}); quarantined, keeping current DB");
+        return Ok(None);
+    }
     let db = db_path(app_data.to_path_buf());
     // Checkpoint the WAL first so the backup captures *all* committed
     // transactions. Removing -wal/-shm before copying loses anything not yet
@@ -483,16 +488,36 @@ pub fn vacuum_into_file(conn: &Connection, dest: &std::path::Path) -> Result<(),
     Ok(())
 }
 
-pub fn open_db(path: PathBuf) -> Result<Connection, AppError> {
+pub fn open_db(path: PathBuf, run_migrations: bool) -> Result<Connection, AppError> {
     let conn = Connection::open(&path)?;
-    let _ = conn.pragma_update(None, "journal_mode", "WAL");
+    if let Err(e) = conn.pragma_update(None, "journal_mode", "WAL") {
+        eprintln!("WAL pragma failed for {}: {e}", path.display());
+    } else {
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap_or_default();
+        if !mode.eq_ignore_ascii_case("wal") {
+            eprintln!(
+                "journal_mode is {mode} (not WAL) for {}; concurrency falls back to rollback-journal semantics",
+                path.display()
+            );
+        }
+    }
     conn.execute_batch("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;")
         ?;
-    backup_before_migration(&conn, &path);
-    migrate(&conn)?;
-    feeds::seed_feed_categories(&conn)?;
-    feeds::seed_feeds(&conn)?;
+    if run_migrations {
+        backup_before_migration(&conn, &path);
+        migrate(&conn)?;
+        feeds::seed_feed_categories(&conn)?;
+        feeds::seed_feeds(&conn)?;
+    }
     Ok(conn)
+}
+
+/// Back-compat wrapper for tests and callers that open a single connection.
+#[cfg(test)]
+pub fn open_db_single(path: PathBuf) -> Result<Connection, AppError> {
+    open_db(path, true)
 }
 
 /// Snapshot the database before a version bump, so a bad migration can be
@@ -585,17 +610,20 @@ const LEGACY_COLUMN_ADDITIONS: &[&str] = &[
 /// Version-gated migrations. To add one: raise `LATEST_VERSION` and apply its
 /// DDL inside `migrate` when `stored < N`. Stamp each version with its own
 /// number (never `LATEST_VERSION`) so later steps are not skipped.
-const LATEST_VERSION: i64 = 15;
+const LATEST_VERSION: i64 = 17;
 
 /// Run one `ALTER TABLE … ADD COLUMN`, tolerating "duplicate column name" as
 /// a no-op: legacy databases created before version stamping may already have
 /// the column.
 fn add_column_if_missing(conn: &Connection, sql: &str) -> Result<(), AppError> {
     if let Err(e) = conn.execute(sql, []) {
+        // Error text comes from the bundled SQLite; match the stable prefix
+        // rather than the full English sentence.
         let msg = e.to_string();
-        if !msg.contains("duplicate column name") {
-            return Err(AppError::msg(msg));
+        if msg.contains("duplicate column name") {
+            return Ok(());
         }
+        return Err(AppError::from(e));
     }
     Ok(())
 }
@@ -830,9 +858,9 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), AppError> {
     if stored < 13 {
         // Sidebar source priority: user-assignable ordering that both sorts the
         // feed list and biases the home ranking (higher = surfaced earlier).
-        conn.execute(
+        add_column_if_missing(
+            conn,
             "ALTER TABLE feed_sources ADD COLUMN priority INTEGER NOT NULL DEFAULT 0",
-            [],
         )?;
         conn.pragma_update(None, "user_version", 13)?;
         stored = 13;
@@ -873,6 +901,31 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), AppError> {
         )?;
         conn.pragma_update(None, "user_version", 15)?;
         stored = 15;
+    }
+
+    if stored < 16 {
+        // 好句摘录功能取消：v15 建的表在此退场。已存摘录随表删除，不做迁移
+        // 保留（该功能从未发布 UI，无用户依赖）。
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS saved_sentences;",
+        )?;
+        conn.pragma_update(None, "user_version", 16)?;
+        stored = 16;
+    }
+
+    if stored < 17 {
+        // 主题标签子系统取消（自建分类代替）：v7 加的列在此退场。已有标签
+        // 数据随列删除；排序改走来源/分类亲和度，不再读标签。
+        // DROP COLUMN 要求 SQLite 3.35+；bundled 版本满足，旧列缺失时
+        // （极端历史库）ALTER 报错则忽略——列不存在即已达成目标。
+        if let Err(e) = conn.execute("ALTER TABLE articles DROP COLUMN tags_json", []) {
+            let msg = e.to_string();
+            if !msg.contains("no such column") {
+                return Err(AppError::from(e));
+            }
+        }
+        conn.pragma_update(None, "user_version", 17)?;
+        stored = 17;
     }
 
     if stored < LATEST_VERSION {

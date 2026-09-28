@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useVocab } from "../store";
+import { useKnown } from "../store";
 import { filterKnownWords } from "../knownWords";
 
 /**
@@ -8,7 +8,7 @@ import { filterKnownWords } from "../knownWords";
  * add (manual entry), and un-mark them.
  */
 export default function KnownWords() {
-  const { knownTerms, markKnown, unmarkKnown } = useVocab();
+  const { knownTerms, markKnown, unmarkKnown } = useKnown();
   const [q, setQ] = useState("");
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);

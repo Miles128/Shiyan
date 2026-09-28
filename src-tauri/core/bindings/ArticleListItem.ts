@@ -7,8 +7,4 @@ export type ArticleListItem = { id: string, url: string, title: string, source: 
 /**
  * Interest rank from the ranked list; 0 when unranked.
  */
-rank_score: number, dwell_ms: number, read_completed: boolean, liked: boolean, 
-/**
- * Lowercase English topic tags (for filtering + interest profile).
- */
-tags: Array<string>, };
+rank_score: number, dwell_ms: number, read_completed: boolean, liked: boolean, };

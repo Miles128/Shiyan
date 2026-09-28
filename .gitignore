@@ -38,3 +38,8 @@ chunks.seed.json
 
 # WorkBuddy workspace data
 .workbuddy/
+
+# TypeScript / test artifacts
+*.tsbuildinfo
+coverage/
+.env

@@ -48,7 +48,7 @@ pub fn remove_known_word(conn: &Connection, term: &str) -> Result<(), AppError> 
 /// `app_meta`; the reader re-checks membership on every load anyway.
 const NORMALIZE_KNOWN_KEY: &str = "known_words_normalized_v1";
 
-pub(crate) fn normalize_known_words_once(conn: &Connection) -> Result<usize, AppError> {
+pub fn normalize_known_words_once(conn: &Connection) -> Result<usize, AppError> {
     if super::get_meta(conn, NORMALIZE_KNOWN_KEY)?.is_some() {
         return Ok(0);
     }

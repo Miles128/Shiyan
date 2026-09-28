@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, defaultAppConfig, type AppConfig } from "../api";
+import { listen } from "@tauri-apps/api/event";
+import { api, defaultAppConfig, type AppConfig, type RefreshProgress } from "../api";
 import { normalizeConfig, useAppConfig } from "../store";
+import { placementSummaryText } from "../placement/engine";
 import { useToast } from "../components/Toaster";
 import PageBack from "../components/PageBack";
 import { isThemePref, THEME_LABELS, THEME_PREFS, type ThemePref } from "../theme";
@@ -99,6 +101,23 @@ export default function Settings() {
   const [repairMsg, setRepairMsg] = useState<string | null>(null);
   const [backingUp, setBackingUp] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  // 5B: 刷新进行中禁用备份（后端同样拒绝，双保险）。
+  const [refreshing, setRefreshing] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void listen<RefreshProgress>("refresh-progress", (event) => {
+      if (cancelled) return;
+      setRefreshing(event.payload.phase !== "done");
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
   const saveTimer = useRef<number | undefined>(undefined);
   const pendingSaveRef = useRef(false);
   const seededRef = useRef(false);
@@ -226,6 +245,7 @@ export default function Settings() {
 
       {tab === "reading" && (
         <>
+          <p className="muted settings-group-label">读与标</p>
           <section className="settings-section">
             <h2>外观</h2>
             <PrefSelect
@@ -271,13 +291,7 @@ export default function Settings() {
             </label>
             <div className="placement-settings">
               <p className="muted">
-                {cfg.vocab_placement_done
-                  ? `上次测验：约 ${Math.round(cfg.vocab_placement_l ?? cfg.freq_band)} 词${
-                      cfg.vocab_placement_at
-                        ? ` · ${new Date(cfg.vocab_placement_at).toLocaleString()}`
-                        : ""
-                    }`
-                  : "尚未完成词汇量测验。"}
+                {placementSummaryText(cfg) ?? "尚未完成词汇量测验。"}
               </p>
               <Link className="btn" to="/placement">
                 {cfg.vocab_placement_done ? "重新测验" : "测一下词汇量"}
@@ -285,6 +299,7 @@ export default function Settings() {
             </div>
           </section>
 
+          <p className="muted settings-group-label">版式与存档</p>
           <section className="settings-section">
             <h2>阅读排版</h2>
             <p className="muted">只作用于阅读页正文。改动即时生效，阅读页内也可用「Aa」按钮调整。</p>
@@ -357,8 +372,8 @@ export default function Settings() {
             </p>
           </section>
 
-          <section className="settings-section">
-            <h2>维护</h2>
+          <details className="settings-section">
+            <summary>维护（低频运维）</summary>
             <p className="muted">
               重新抓取「正文丢失段落换行」的文章并替换正文（每次最多 30 篇）。
             </p>
@@ -370,7 +385,7 @@ export default function Settings() {
               {repairing ? "修复中…" : "重抓修复段落"}
             </button>
             {repairMsg && <p className="banner ok">{repairMsg}</p>}
-          </section>
+          </details>
         </>
       )}
 
@@ -426,9 +441,10 @@ export default function Settings() {
             <button
               className="btn primary"
               onClick={() => void backupDb()}
-              disabled={backingUp}
+              disabled={backingUp || refreshing}
+              title={refreshing ? "刷新进行中，请刷新结束后再备份" : undefined}
             >
-              {backingUp ? "备份中…" : "备份数据库"}
+              {backingUp ? "备份中…" : refreshing ? "刷新中，稍后备份" : "备份数据库"}
             </button>
             <button
               className="btn"

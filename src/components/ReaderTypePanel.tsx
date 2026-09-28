@@ -135,6 +135,15 @@ export default function ReaderTypePanel() {
         options={WIDTH_CHIPS}
         onPick={(v) => update({ reader_line_width: v as ReaderLineWidthId })}
       />
+      <ChipRow
+        label="难词注释"
+        value={cfg.show_hard_word_gloss ? "on" : "off"}
+        options={[
+          { value: "on", label: "显示" },
+          { value: "off", label: "隐藏" },
+        ]}
+        onPick={(v) => update({ show_hard_word_gloss: v === "on" })}
+      />
     </div>
   );
 }

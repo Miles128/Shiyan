@@ -1,4 +1,4 @@
-//! LLM enrichment: backfill translated cards (summary_zh) and topic tags.
+//! LLM enrichment: backfill translated cards (summary_zh).
 
 use crate::config::AppConfig;
 use crate::db::{self, DbState};
@@ -13,8 +13,6 @@ const CHUNK: usize = 16;
 /// can never turn one refresh into an unbounded job — but high enough that a
 /// backlog drains in a couple of runs instead of dozens.
 pub const CARDS_PER_REFRESH: usize = 200;
-/// Topic tags processed per refresh (see [`CARDS_PER_REFRESH`]).
-pub const TAGS_PER_REFRESH: usize = 200;
 
 /// Run `job` over `items`, halving a batch whenever the model fails to answer
 /// it (transport error, unparseable JSON, wrong item count). Models routinely
@@ -151,39 +149,7 @@ pub fn fill_missing_card_zh(
             if wrote_summary {
                 db::set_article_summary_zh(conn, &article.id, &card.summary_zh)?;
             }
-            if !card.tags.is_empty() {
-                db::set_article_tags(conn, &article.id, &card.tags)?;
-            }
             Ok(wrote_summary)
-        },
-        on_progress,
-    )
-}
-
-/// Backfill topic tags for articles that lack them (existing library +
-/// anything whose card was translated before tags existed).
-pub fn fill_missing_tags(
-    db: &DbState,
-    cfg: &AppConfig,
-    limit: usize,
-    on_progress: impl FnMut(usize, usize),
-) -> Result<usize, AppError> {
-    let missing = {
-        let conn = db.lock_read()?;
-        db::articles_missing_tags(&conn, limit)?
-    };
-    run_backfill(
-        db,
-        cfg,
-        "主题标签",
-        missing,
-        |batch: &[vocab::ArticleCardIn]| vocab::assign_article_tags(cfg, batch),
-        |conn: &Connection, article: &db::Article, tags: Vec<String>| {
-            if tags.is_empty() {
-                return Ok(false);
-            }
-            db::set_article_tags(conn, &article.id, &tags)?;
-            Ok(true)
         },
         on_progress,
     )

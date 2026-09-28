@@ -6,18 +6,24 @@ use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::LazyLock;
-use tauri::{AppHandle, Emitter, Manager};
 use ts_rs::TS;
 use uuid::Uuid;
 
 /// Shared LLM HTTP client — one connection pool instead of a new client per call.
-static CHAT_CLIENT: LazyLock<Client> = LazyLock::new(|| {
+static CHAT_CLIENT: LazyLock<Result<Client, String>> = LazyLock::new(|| {
     Client::builder()
         .timeout(std::time::Duration::from_secs(90))
         .connect_timeout(std::time::Duration::from_secs(10))
         .build()
-        .expect("build reqwest client")
+        .map_err(|e| e.to_string())
 });
+
+fn chat_client() -> Result<Client, AppError> {
+    CHAT_CLIENT
+        .as_ref()
+        .cloned()
+        .map_err(|e| AppError::msg(format!("LLM 客户端初始化失败：{e}")))
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VocabEnrichment {
@@ -197,9 +203,6 @@ pub struct ArticleCardIn {
 pub struct ArticleCardOut {
     #[serde(default)]
     pub summary_zh: String,
-    /// 2–3 lowercase English topic tags for interest profiling.
-    #[serde(default)]
-    pub tags: Vec<String>,
 }
 
 pub fn card_from_article(title: &str, content_text: &str) -> ArticleCardIn {
@@ -209,7 +212,7 @@ pub fn card_from_article(title: &str, content_text: &str) -> ArticleCardIn {
     }
 }
 
-/// Batch: one-sentence Chinese synopsis + topic tags, in one request.
+/// Batch: one-sentence Chinese synopsis, in one request.
 /// Titles are intentionally left in English — no title tokens are spent.
 /// Input order = output order.
 pub fn translate_article_cards(
@@ -222,9 +225,9 @@ pub fn translate_article_cards(
     ensure_configured(cfg)?;
     let system = r#"You write Simplified Chinese metadata for English articles for language learners.
 Given a JSON array of objects {title, excerpt}, return ONLY a JSON array of the same length.
-Each item must be {"summary_zh":"<Chinese synopsis>","tags":["<tag1>","<tag2>"]}.
+Each item must be {"summary_zh":"<Chinese synopsis>"}.
 summary_zh is ONE complete Simplified Chinese sentence (about 30–60 characters) that says what the article is about. No ellipsis padding, no quotes, no English.
-tags is 2–3 short lowercase English topic tags (e.g. ["economy","central-bank"]). No markdown fences, no commentary."#;
+No markdown fences, no commentary."#;
     let payload = serde_json::to_string(cards)?;
     let out: Vec<ArticleCardOut> = chat_json_array(cfg, system, &payload, "article cards")?;
     if out.len() != cards.len() {
@@ -238,65 +241,9 @@ tags is 2–3 short lowercase English topic tags (e.g. ["economy","central-bank"
         .into_iter()
         .map(|mut c| {
             c.summary_zh = clip_zh(&c.summary_zh, CARD_SUMMARY_MAX_CHARS);
-            c.tags = c
-                .tags
-                .iter()
-                .map(|t| t.trim().to_lowercase())
-                .filter(|t| !t.is_empty())
-                .take(3)
-                .collect();
             c
         })
         .collect())
-}
-
-/// Tags-only pass for backfilling existing articles — no title/summary
-/// output tokens are paid for.
-#[derive(Deserialize, Default)]
-pub struct ArticleTagsOut {
-    #[serde(default)]
-    pub tags: Vec<String>,
-}
-
-pub fn assign_article_tags(
-    cfg: &AppConfig,
-    cards: &[ArticleCardIn],
-) -> Result<Vec<Vec<String>>, AppError> {
-    if cards.is_empty() {
-        return Ok(vec![]);
-    }
-    ensure_configured(cfg)?;
-    let system = r#"You label English news/articles for a language learner's feed.
-Given a JSON array of objects {title, excerpt}, return ONLY a JSON array of the same length.
-Each item must be {"tags":["<tag1>","<tag2>"]}.
-tags is 2-3 short lowercase English topic tags describing the subject (e.g. ["economy","central-bank"]). Prefer specific topics over generic ones (avoid "news").
-No markdown fences, no commentary."#;
-    let payload = serde_json::to_string(cards)?;
-    let out: Vec<ArticleTagsOut> = chat_json_array(cfg, system, &payload, "article tags")?;
-    if out.len() != cards.len() {
-        return Err(AppError::msg(format!(
-            "article tag count mismatch: got {} expected {}",
-            out.len(),
-            cards.len()
-        )));
-    }
-    Ok(out.into_iter().map(|row| normalize_tags(row.tags)).collect())
-}
-
-/// Lowercase, trim, dedupe, cap at 3 tags.
-pub fn normalize_tags(tags: Vec<String>) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for tag in tags {
-        let t = tag.trim().to_lowercase();
-        if t.is_empty() || out.contains(&t) {
-            continue;
-        }
-        out.push(t);
-        if out.len() >= 3 {
-            break;
-        }
-    }
-    out
 }
 
 pub fn enrich_vocab(cfg: &AppConfig, term: &str, context: &str) -> Result<VocabEnrichment, AppError> {
@@ -335,59 +282,57 @@ pub fn needs_enrichment(item: &MemoryItem) -> bool {
     }
 }
 
-/// Enrich a just-saved memory item in the background: call the LLM, fill only
-/// the still-empty fields of the stored row, then emit `memory-updated` so any
-/// open library view can refresh. Fire-and-forget — failures (e.g. no API key
-/// configured) are silently dropped and the row keeps what was saved
-/// synchronously.
-pub fn enrich_memory_background(app: AppHandle, item: MemoryItem) {
-    std::thread::spawn(move || {
-        let Ok(cfg) = crate::config::load_config() else {
-            return;
-        };
-        let enrichment = match item.kind.as_str() {
-            "phrase" => enrich_phrase(&cfg, &item.term, &item.context_sentence).map(|e| {
-                VocabEnrichment {
-                    definition_zh: e.meaning_zh,
-                    word_type: if e.usage.is_empty() {
-                        "phrase".to_string()
-                    } else {
-                        e.usage
-                    },
-                    collocations: Vec::new(),
-                }
-            }),
-            _ => enrich_vocab(&cfg, &item.term, &item.context_sentence),
-        };
-        let Ok(enrichment) = enrichment else {
-            return;
-        };
-        let Some(state) = app.try_state::<DbState>() else {
-            return;
-        };
-        let Ok(conn) = state.lock_write() else {
-            return;
-        };
-        // The row may have been deleted or re-merged meanwhile; only touch it
-        // if it is still there, and only fill what is still empty.
-        if let Ok(Some(mut updated)) = db::get_memory_by_term(&conn, &item.kind, &item.term) {
-            if updated.definition_zh.is_empty() {
-                updated.definition_zh = enrichment.definition_zh;
-            }
-            if updated.word_type.is_empty() {
-                updated.word_type = enrichment.word_type;
-            }
-            for c in enrichment.collocations {
-                let c = c.trim();
-                if !c.is_empty() && !updated.collocations.contains(&c.to_string()) {
-                    updated.collocations.push(c.to_string());
-                }
-            }
-            if db::update_memory_meta(&conn, &updated).is_ok() {
-                let _ = app.emit("memory-updated", &updated);
-            }
+/// Enrichment payload for a just-saved memory item: dispatch to the LLM by
+/// item kind. Returns `None` on any failure (e.g. no API key configured) —
+/// callers treat enrichment as fire-and-forget and the row keeps what was
+/// saved synchronously.
+pub fn enrich_memory_fields(cfg: &AppConfig, item: &MemoryItem) -> Option<VocabEnrichment> {
+    let enrichment = match item.kind.as_str() {
+        "phrase" => {
+            enrich_phrase(cfg, &item.term, &item.context_sentence).map(|e| VocabEnrichment {
+                definition_zh: e.meaning_zh,
+                word_type: if e.usage.is_empty() {
+                    "phrase".to_string()
+                } else {
+                    e.usage
+                },
+                collocations: Vec::new(),
+            })
         }
-    });
+        _ => enrich_vocab(cfg, &item.term, &item.context_sentence),
+    };
+    enrichment.ok()
+}
+
+/// Fill the still-empty fields of the stored row. The row may have been
+/// deleted or re-merged meanwhile; only touch it if it is still there, and
+/// only fill what is still empty. Returns the updated row so the caller can
+/// broadcast it, or `None` when there was nothing to update.
+pub fn apply_memory_enrichment(
+    conn: &rusqlite::Connection,
+    item: &MemoryItem,
+    enrichment: &VocabEnrichment,
+) -> Result<Option<MemoryItem>, AppError> {
+    let Ok(Some(mut updated)) = db::get_memory_by_term(conn, &item.kind, &item.term) else {
+        return Ok(None);
+    };
+    if updated.definition_zh.is_empty() {
+        updated.definition_zh = enrichment.definition_zh.clone();
+    }
+    if updated.word_type.is_empty() {
+        updated.word_type = enrichment.word_type.clone();
+    }
+    for c in &enrichment.collocations {
+        let c = c.trim();
+        if !c.is_empty() && !updated.collocations.contains(&c.to_string()) {
+            updated.collocations.push(c.to_string());
+        }
+    }
+    if db::update_memory_meta(conn, &updated).is_ok() {
+        Ok(Some(updated))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Save a word/phrase with whatever fields the popover already has — the
@@ -564,7 +509,8 @@ fn chat_body(cfg: &AppConfig, system: &str, user: &str, json_mode: bool) -> Resu
     }
 
     let send = || -> Result<String, AppError> {
-        let resp = CHAT_CLIENT
+        let client = chat_client()?;
+        let resp = client
             .post(&url)
             .bearer_auth(&cfg.api_key)
             .json(&body)
@@ -753,11 +699,11 @@ mod clip_tests {
 
     #[test]
     fn parse_json_array_accepts_a_bare_array() {
-        let raw = r#"[{"summary_zh":"甲","tags":["a"]},{"summary_zh":"乙","tags":[]}]"#;
+        let raw = r#"[{"summary_zh":"甲"},{"summary_zh":"乙"}]"#;
         let rows: Vec<ArticleCardOut> = parse_json_array(raw).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].summary_zh, "甲");
-        assert_eq!(rows[1].tags.len(), 0);
+        assert_eq!(rows[1].summary_zh, "乙");
     }
 
     #[test]

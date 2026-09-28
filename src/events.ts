@@ -36,6 +36,11 @@ export function emitEvent<K extends keyof AppEvents>(
   const set = registry.get(name);
   if (!set) return;
   for (const handler of set) {
-    (handler as Handler<AppEvents[K]>)(payload);
+    try {
+      (handler as Handler<AppEvents[K]>)(payload);
+    } catch (e) {
+      // One bad subscriber must not break the rest (e.g. sidebar sync).
+      console.error(`event handler for ${name} failed`, e);
+    }
   }
 }

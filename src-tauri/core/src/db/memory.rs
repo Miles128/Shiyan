@@ -156,11 +156,22 @@ pub fn due_memory(conn: &Connection, kind: Option<&str>) -> Result<Vec<MemoryIte
     Ok(rows)
 }
 
+/// Statuses the UI can move a row between. Anything else would silently
+/// orphan the row: every list query filters on these two values, so an
+/// unknown status disappears from all tabs with no error.
+const MEMORY_STATUSES: &[&str] = &["learning", "mastered"];
+
 pub fn set_memory_status(conn: &Connection, id: &str, status: &str) -> Result<(), AppError> {
-    conn.execute(
+    if !MEMORY_STATUSES.contains(&status) {
+        return Err(AppError::msg(format!("unknown memory status: {status}")));
+    }
+    let changed = conn.execute(
         "UPDATE memory_items SET status=?1 WHERE id=?2",
         params![status, id],
     )?;
+    if changed == 0 {
+        return Err(AppError::msg(format!("memory item not found: {id}")));
+    }
     Ok(())
 }
 

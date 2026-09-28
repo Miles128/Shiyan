@@ -161,7 +161,9 @@ static CONFIG_CACHE: std::sync::LazyLock<std::sync::Mutex<Option<AppConfig>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
 
 pub fn load_config() -> Result<AppConfig, AppError> {
-    let mut cache = CONFIG_CACHE.lock().map_err(|_| AppError::Locked)?;
+    let mut cache = CONFIG_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     if let Some(cfg) = cache.as_ref() {
         return Ok(cfg.clone());
     }
@@ -174,6 +176,17 @@ fn read_config_file() -> Result<AppConfig, AppError> {
     let path = config_path();
     if !path.exists() {
         return Ok(AppConfig::default());
+    }
+    // Self-heal legacy permissions: keys live here, so a 0644 file from an
+    // older version is tightened to 0600 on read (best-effort).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = std::fs::metadata(&path) {
+            if meta.permissions().mode() & 0o777 != 0o600 {
+                let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+            }
+        }
     }
     let raw = fs::read_to_string(&path)?;
     Ok(serde_json::from_str(&raw)?)
@@ -197,7 +210,9 @@ pub fn save_config(cfg: &AppConfig) -> Result<(), AppError> {
         use std::os::unix::fs::PermissionsExt;
         let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
     }
-    *CONFIG_CACHE.lock().map_err(|_| AppError::Locked)? = Some(cfg.clone());
+    *CONFIG_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner()) = Some(cfg.clone());
     Ok(())
 }
 

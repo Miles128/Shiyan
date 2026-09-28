@@ -45,14 +45,27 @@ function ingestRows(rawLevels: RawRow[]) {
   lexicon.clear();
   phraseList.length = 0;
   for (const row of rawLevels) {
-    const [term, cefr, rank, zh] = row;
+    // One malformed bundled row must not abort the whole lexicon: previously
+    // normalizeKey(undefined) threw here, leaving every difficulty/underline
+    // feature silently dead (callers swallow the load error). Validate shape
+    // first, skip the bad row.
+    if (!Array.isArray(row) || row.length < 3) continue;
+    const [term, cefr, rank, zh] = row as unknown[];
+    if (
+      typeof term !== "string" ||
+      typeof cefr !== "string" ||
+      typeof rank !== "number" ||
+      !Number.isFinite(rank)
+    ) {
+      continue;
+    }
     if (!CEFR_RANK[cefr as CefrLevel]) continue;
     const key = normalizeKey(term);
     if (!key) continue;
     lexicon.set(key, {
       cefr: cefr as CefrLevel,
       rank,
-      zh: zh?.trim() || undefined,
+      zh: typeof zh === "string" ? zh.trim() || undefined : undefined,
     });
     if (key.includes(" ")) phraseList.push(key);
   }

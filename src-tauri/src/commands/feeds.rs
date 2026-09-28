@@ -98,9 +98,27 @@ pub async fn discover_feeds(
     })
     .await
 }
-
 #[tauri::command]
 pub async fn refresh_feeds(app: AppHandle) -> Result<RefreshResult, AppError> {
+    use crate::commands::REFRESHING;
+    if REFRESHING
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+        )
+        .is_err()
+    {
+        return Err(AppError::msg("正在刷新，请稍后再试"));
+    }
+    struct RefreshGuard;
+    impl Drop for RefreshGuard {
+        fn drop(&mut self) {
+            REFRESHING.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let _guard = RefreshGuard;
     let _ = app.emit(
         "refresh-progress",
         RefreshProgress {
@@ -125,4 +143,12 @@ pub async fn refresh_feeds(app: AppHandle) -> Result<RefreshResult, AppError> {
         )
     })
     .await
+}
+
+/// Cooperative cancel for an in-flight `refresh_feeds`: workers stop after
+/// the current feed and enrich phases are skipped. Committed articles stay.
+#[tauri::command]
+pub fn cancel_refresh() -> Result<(), AppError> {
+    feeds::request_refresh_cancel();
+    Ok(())
 }

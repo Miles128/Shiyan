@@ -18,6 +18,8 @@
   --glow-b: #eae0d3;
   --progress-a: #0f5c4c;
   --progress-b: #1a7a66;
+  /* 顶栏锁死高度：下方各吸顶行栏 top 由此变量派生，改一处即同步。 */
+  --bar-h: 40px;
   font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "LXGW WenKai",
     serif;
 }
@@ -180,36 +182,6 @@ body.is-resizing {
   user-select: none;
 }
 
-.sidebar-section {
-  margin-bottom: 20px;
-}
-
-.sidebar-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  margin-bottom: 8px;
-  padding-left: 2px;
-}
-
-.sidebar-title {
-  font-size: 10pt;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-.sidebar-clear {
-  appearance: none;
-  border: none;
-  background: transparent;
-  color: var(--accent);
-  font-size: 10pt;
-  cursor: pointer;
-  padding: 0;
-}
-
 /* Sidebar header: wordmark left, 筛选 icon in the top-right corner. */
 .sidebar-header {
   display: flex;
@@ -227,28 +199,6 @@ body.is-resizing {
   color: var(--muted);
 }
 
-.sidebar-filter {
-  appearance: none;
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  padding: 5px;
-  border-radius: 8px;
-}
-
-.sidebar-filter:hover {
-  background: var(--hover-fill);
-  color: var(--ink);
-}
-
-.sidebar-filter.active {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-
 /* Codex-style tree: branch rows (category / 今日推荐) + draggable leaf rows. */
 .tree-node {
   margin-bottom: 2px;
@@ -262,10 +212,12 @@ body.is-resizing {
   appearance: none;
   border: none;
   background: transparent;
-  color: var(--ink);
+  /* Category rows only fold the tree (they never filter): muted + lighter
+     weight so they don't read as filters next to source rows. */
+  color: var(--muted);
   font-family: inherit;
   font-size: 11pt;
-  font-weight: 600;
+  font-weight: 500;
   text-align: left;
   padding: 5px 6px;
   border-radius: 7px;
@@ -347,19 +299,10 @@ body.is-resizing {
   opacity: 0.45;
 }
 
-.tree-leaf.is-static {
-  cursor: default;
-  color: var(--muted);
-}
-
 /* Suppress selection / hand the cursor to the grab while sorting. */
 body.is-sorting {
   cursor: grabbing;
   user-select: none;
-}
-
-.tree-leaf.is-empty {
-  opacity: 0.7;
 }
 
 .source-dot {
@@ -373,18 +316,6 @@ body.is-sorting {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.sidebar-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.sidebar-tags-section {
-  margin-top: 18px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
 }
 
 /* Single-list view heading (今日推荐 / focused source / filtered). */
@@ -404,7 +335,7 @@ body.is-sorting {
   color: var(--ink);
 }
 
-/* Collapsed rail (Reader): glanceable priority dots. */
+/* Collapsed rail (Reader): expand button only. */
 .sidebar-rail {
   flex: 0 0 56px;
   width: 56px;
@@ -426,19 +357,14 @@ body.is-sorting {
   color: var(--ink);
 }
 
-.rail-dots {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  margin-top: 12px;
-  cursor: pointer;
-}
-
-.rail-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
+/* Contextual topbar cluster (Home-only: refresh / filter / search). Globals
+   below never move; the cluster vanishes on other routes. */
+.topbar-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--line);
+  margin-inline: 6px;
+  flex-shrink: 0;
 }
 
 /* Top-bar inline search, seated next to the refresh button. */
@@ -480,8 +406,8 @@ body.is-sorting {
   position: sticky;
   top: 0;
   z-index: 40;
-  /* 锁死高度：下方各吸顶首行栏 top 取 39px（藏 1px 在顶栏下），接缝恒成立。 */
-  height: 40px;
+  /* 锁死高度：下方各吸顶行栏 top 由 --bar-h 派生（藏 1px 在顶栏下），接缝恒成立。 */
+  height: var(--bar-h);
 }
 
 /* With a sidebar, the traffic lights sit over the sidebar, so the top bar no
@@ -502,6 +428,11 @@ body.is-sorting {
   letter-spacing: 0.04em;
   color: var(--muted);
   margin-right: 6px;
+  text-decoration: none;
+}
+
+a.brand-mini:hover {
+  color: var(--ink);
 }
 
 .topbar-link {
@@ -523,7 +454,10 @@ body.is-sorting {
   gap: 4px;
 }
 
-.topbar-btn {
+/* Shared borderless icon-button recipe (topbar / reader);
+   per-family rules below only override padding. */
+.topbar-btn,
+.icon-btn {
   appearance: none;
   border: none;
   background: transparent;
@@ -531,18 +465,19 @@ body.is-sorting {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 6px 8px;
+  gap: 4px;
   border-radius: 8px;
   cursor: pointer;
+}
+
+.topbar-btn {
+  padding: 6px 8px;
   text-decoration: none;
 }
 
-.topbar-btn svg {
+.topbar-btn svg,
+.icon-btn svg {
   display: block;
-}
-
-.topbar-btn.spin svg {
-  animation: topbar-spin 0.9s linear infinite;
 }
 
 @keyframes topbar-spin {
@@ -552,42 +487,25 @@ body.is-sorting {
 }
 
 .topbar-btn:hover,
-.topbar-btn.active {
+.topbar-btn.active,
+.icon-btn:hover {
   color: var(--ink);
   background: var(--accent-soft);
 }
 
-.topbar-btn:disabled {
+.topbar-btn.spin svg {
+  animation: topbar-spin 0.9s linear infinite;
+}
+
+.topbar-btn:disabled,
+.icon-btn:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
 /* Reader 文章操作图标按钮（返回/收藏/朗读/翻译），与 topbar-btn 同风格。 */
 .icon-btn {
-  appearance: none;
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   padding: 7px;
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.icon-btn svg {
-  display: block;
-}
-
-.icon-btn:hover {
-  color: var(--ink);
-  background: var(--accent-soft);
-}
-
-.icon-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 
 .icon-btn[aria-pressed="true"] {
@@ -616,7 +534,7 @@ body.is-sorting {
   max-width: none;
   margin-inline: 0;
   padding-top: 0;
-  padding-inline: clamp(1.25rem, 4vw, 2.5rem);
+  padding-inline: clamp(0.75rem, 2vw, 1.25rem);
   box-sizing: border-box;
   --reader-font: "Iowan Old Style", "Palatino Linotype", Palatino, "LXGW WenKai",
     serif;
@@ -629,8 +547,7 @@ body.is-sorting {
   max-width: none;
 }
 
-.page.reader h1,
-.page.reader .article-tags {
+.page.reader h1 {
   margin: 4px 0 0;
   font-size: 10pt;
   letter-spacing: 0.01em;
@@ -659,12 +576,12 @@ body.is-sorting {
    top 取 39px 而非 40px：藏 1px 在顶栏之下，吞掉亚像素接缝。 */
 .reader-title-row {
   position: sticky;
-  top: 39px;
+  top: calc(var(--bar-h) - 1px);
   z-index: 30;
   background: var(--bar-bg);
   backdrop-filter: blur(8px);
-  margin-inline: calc(clamp(1.25rem, 4vw, 2.5rem) * -1);
-  padding: 8px clamp(1.25rem, 4vw, 2.5rem) 6px;
+  margin-inline: calc(clamp(0.75rem, 2vw, 1.25rem) * -1);
+  padding: 8px clamp(0.75rem, 2vw, 1.25rem) 6px;
   border-bottom: 1px solid var(--line);
   display: flex;
   align-items: flex-start;
@@ -804,25 +721,7 @@ body.is-sorting {
   padding-inline: var(--page-pad-x);
 }
 
-/* Locked first row: refresh + search + insight + 继续阅读 stay put.
-   与阅读页标题栏同一配方：全宽贴死顶栏与两侧，不悬浮。 */
-.home-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  position: sticky;
-  top: 39px;
-  z-index: 30;
-  background: var(--bar-bg);
-  backdrop-filter: blur(8px);
-  margin-inline: calc(var(--page-pad-x, clamp(16px, 3.5vw, 64px)) * -1);
-  padding: 8px var(--page-pad-x, clamp(16px, 3.5vw, 64px));
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 12px;
-}
-
-/* Right-aligned cluster in the category row: insight text + inline toggles. */
+/* Right-aligned cluster in the list heading row: insight text + inline toggles. */
 .tabs-right {
   margin-left: auto;
   display: flex;
@@ -837,31 +736,7 @@ body.is-sorting {
   text-align: right;
 }
 
-/* Borderless icon button (refresh, sitting next to the category tabs). */
-.iconlike {
-  appearance: none;
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 4px;
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.iconlike:hover {
-  color: var(--ink);
-  background: var(--accent-soft);
-}
-
-.iconlike:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.iconlike.spin svg {
+.icon-btn.spin svg {
   animation: topbar-spin 0.9s linear infinite;
 }
 
@@ -1087,6 +962,16 @@ body.is-sorting {
   color: var(--danger);
 }
 
+:root[data-theme="dark"] .banner.err {
+  background: #3a2323;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .banner.err {
+    background: #3a2323;
+  }
+}
+
 .banner.with-action {
   display: flex;
   align-items: center;
@@ -1232,7 +1117,8 @@ body.is-sorting {
 
 .para-btn {
   opacity: 0;
-  transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+  visibility: hidden;
+  transition: opacity 0.15s ease, visibility 0.15s ease, color 0.15s ease, background 0.15s ease;
   width: 26px;
   height: 26px;
   border-radius: 8px;
@@ -1249,6 +1135,7 @@ body.is-sorting {
 .para-btn:focus,
 .para-btn:focus-visible {
   opacity: 1;
+  visibility: visible;
 }
 
 .para-btn:hover {
@@ -1261,8 +1148,8 @@ body.is-sorting {
   color: var(--accent);
 }
 
-.para-content p {
-  margin: 0;
+.para-content p,
+.para-content .md-preview {
   line-height: var(--reader-lh, 1.75);
   font-size: var(--reader-size, 1.08rem);
   font-family: var(--reader-font, inherit);
@@ -1272,14 +1159,8 @@ body.is-sorting {
   overflow-wrap: break-word;
 }
 
-.para-content .md-preview {
-  line-height: var(--reader-lh, 1.75);
-  font-size: var(--reader-size, 1.08rem);
-  font-family: var(--reader-font, inherit);
-  text-align: justify;
-  text-justify: inter-word;
-  hyphens: auto;
-  overflow-wrap: break-word;
+.para-content p {
+  margin: 0;
 }
 
 .para-content .md-preview > :first-child {
@@ -1565,6 +1446,7 @@ mark.vocab-hit:hover {
 .pop-term {
   font-weight: 700;
   margin-bottom: 6px;
+  min-width: 0;
 }
 
 .pop-zh {
@@ -1626,16 +1508,34 @@ mark.vocab-hit:hover {
   font-size: 10pt;
 }
 
+.pop-more {
+  margin-top: 6px;
+  font-size: 0.85rem;
+}
+
+.pop-more > summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.pop-more > summary:hover {
+  color: var(--ink);
+}
+
+.pop-more .pop-senses {
+  margin-top: 4px;
+}
+
+.pop-more .pop-examples {
+  margin-top: 6px;
+}
+
 /* 弹窗头部：词条信息 + 右上角无痕图标按钮（朗读/关闭） */
 .pop-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
-}
-
-.pop-term {
-  min-width: 0;
 }
 
 .pop-icons {
@@ -1730,6 +1630,97 @@ mark.vocab-hit:hover {
 
 .known-add .muted {
   white-space: nowrap;
+}
+
+/* Single-row toolbar for the vocab library: tabs + search on one line. */
+.vocab-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.vocab-toolbar .tabs {
+  margin-bottom: 0;
+}
+
+.vocab-toolbar-search {
+  flex: 1;
+  min-width: 160px;
+  width: auto;
+  margin-bottom: 0;
+}
+
+/* One word per row: term — 中文意思. */
+.vocab-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 9px 2px;
+}
+
+.vocab-term {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vocab-term:hover {
+  color: var(--accent);
+}
+
+.vocab-zh {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.vocab-row-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.vocab-icon-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  padding: 0;
+}
+
+.vocab-icon-btn:hover {
+  color: var(--ink);
+  background: var(--accent-soft);
+}
+
+.vocab-icon-btn.danger:hover {
+  color: var(--danger);
+}
+
+.linklike.danger {
+  color: var(--danger);
 }
 
 .vocab-list {
@@ -1836,6 +1827,18 @@ button.flashcard {
 .settings-section h2 {
   margin: 0 0 14px;
   font-size: 1.15rem;
+}
+
+.settings-group-label {
+  margin: 4px 0 12px;
+  font-weight: 700;
+}
+
+details.settings-section > summary {
+  cursor: pointer;
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin-bottom: 14px;
 }
 
 .settings-section label {
@@ -1972,12 +1975,6 @@ button.flashcard {
   gap: 16px;
 }
 
-.feeds-cat-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
 .feeds-paste {
   display: flex;
   flex-wrap: wrap;
@@ -2009,18 +2006,6 @@ button.flashcard {
 
 .feeds-section-head h3 {
   margin: 0;
-}
-
-.feed-row-main {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.feed-url {
-  font-size: 10pt;
-  word-break: break-all;
 }
 
 .discover-list {
@@ -2109,12 +2094,21 @@ button.flashcard {
     padding: 4px 10px;
     height: auto;
     min-height: 40px;
+    /* 窄窗顶栏换行后高度不定：改为随页滚走，吸顶行贴视口顶，避免盖住/留缝。 */
+    position: static;
+  }
+  /* 顶栏不吸顶时，各行栏直接贴视口顶。 */
+  .reader-title-row,
+  .page-header-slim,
+  .header-tabs,
+  .placement-page .page-header {
+    top: 0;
   }
   .page {
     padding: 10px 16px 32px;
   }
   .page.reader {
-    padding-inline: clamp(1rem, 5vw, 1.5rem);
+    padding-inline: clamp(0.5rem, 3vw, 1rem);
   }
   /* 主界面沿用减半间距，贴边栏与之对齐。 */
   .page.home-page {
@@ -2122,12 +2116,8 @@ button.flashcard {
   }
   /* 贴边栏跟随窄屏内边距，否则左右又会对不齐。 */
   .reader-title-row {
-    margin-inline: calc(clamp(1rem, 5vw, 1.5rem) * -1);
-    padding-inline: clamp(1rem, 5vw, 1.5rem);
-  }
-  .home-toolbar {
-    margin-inline: calc(var(--page-pad-x, 16px) * -1);
-    padding-inline: var(--page-pad-x, 16px);
+    margin-inline: calc(clamp(0.5rem, 3vw, 1rem) * -1);
+    padding-inline: clamp(0.5rem, 3vw, 1rem);
   }
   .settings-type-grid {
     grid-template-columns: 1fr;
@@ -2151,7 +2141,6 @@ button.flashcard {
 
 .article-summary-zh,
 .article-row-source,
-.article-list .article-tags,
 .learning-insight-inline,
 .linklike,
 .tag-chip,
@@ -2239,10 +2228,6 @@ button.flashcard {
 
 .type-toggle.active {
   color: var(--accent);
-}
-
-.reader-title-row {
-  position: sticky;
 }
 
 .type-panel-anchor {
@@ -2399,14 +2384,14 @@ button.flashcard {
 }
 
 /* Pages with a back button: lock the first row under the topbar while
-   scrolling (same sticky recipe as .home-toolbar). Settings folds its back
+   scrolling (same sticky recipe as .reader-title-row). Settings folds its back
    button into the tab row (.header-tabs); Vocab/Stats use .page-header-slim;
    Placement phases use .page-header inside .placement-page. */
 .page-header-slim,
 .header-tabs,
 .placement-page .page-header {
   position: sticky;
-  top: 40px;
+  top: var(--bar-h);
   z-index: 30;
   background: var(--bar-bg);
   backdrop-filter: blur(8px);

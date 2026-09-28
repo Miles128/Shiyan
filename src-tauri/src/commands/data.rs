@@ -11,7 +11,9 @@ pub async fn backup_database(
     app: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
 ) -> Result<Option<String>, AppError> {
-    let file_name = format!(
+    if crate::commands::is_refreshing() {
+        return Err(AppError::msg("刷新进行中，请刷新结束后再备份"));
+    }    let file_name = format!(
         "shiyan-backup-{}.db",
         chrono::Local::now().format("%Y%m%d-%H%M")
     );

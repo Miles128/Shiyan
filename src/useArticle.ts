@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { api, Article } from "./api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
+import { api } from "./api";
 import { shouldRecordOpen } from "./learningStats";
+import { useQuery } from "./query";
 
 // 文章域：加载 hook + 上次阅读/滚动位置记忆（原 lastArticle.ts）。
 
@@ -81,10 +83,6 @@ export function articleViewState(input: {
   return "missing";
 }
 
-export function shouldApplyLoad(requestSeq: number, latestSeq: number): boolean {
-  return requestSeq === latestSeq;
-}
-
 export function translationsMap(
   rows: { scope_key: string; translated_text: string }[],
 ): Record<string, string> {
@@ -96,62 +94,86 @@ export function translationsMap(
 }
 
 export function useArticle(id: string | undefined) {
-  const [article, setArticle] = useState<Article | null>(null);
-  const [paragraphs, setParagraphs] = useState<string[]>([]);
-  const [translations, setTranslations] = useState<Record<string, string>>({});
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Replace-model read: remounts (Reader → Home → Reader) paint the cached
+  // view instantly and revalidate in the background. Stale-response guarding
+  // now lives in useQuery's run generation — no local seq needed.
+  const viewQuery = useQuery(
+    id ? ["article", id] : null,
+    () => api.getArticleView(id ?? ""),
+  );
+  const serverView = viewQuery.data ?? null;
+  const article = serverView?.article ?? null;
+  const paragraphs = serverView?.paragraphs ?? [];
 
-  const loadSeq = useRef(0);
-  const load = useCallback(async () => {
-    const seq = ++loadSeq.current;
-    if (!id) {
-      if (!shouldApplyLoad(seq, loadSeq.current)) return;
-      setArticle(null);
-      setParagraphs([]);
-      setTranslations({});
-      setLoading(false);
-      return;
-    }
-    setError(null);
-    setLoading(true);
-    try {
-      const loaded = await api.getArticleView(id);
-      if (!shouldApplyLoad(seq, loadSeq.current)) return;
-      if (!loaded) {
-        setArticle(null);
-        setParagraphs([]);
-        setTranslations({});
-        return;
-      }
-      setArticle(loaded.article);
-      setParagraphs(loaded.paragraphs);
-      setTranslations(translationsMap(loaded.translations));
-    } catch (e) {
-      if (!shouldApplyLoad(seq, loadSeq.current)) return;
-      setArticle(null);
-      setParagraphs([]);
-      setTranslations({});
-      setError(String(e));
-    } finally {
-      if (shouldApplyLoad(seq, loadSeq.current)) setLoading(false);
-    }
-  }, [id]);
-
+  // Translation overlay: Reader merges paragraph/full-text translations into
+  // the server map via functional updates. The overlay always holds the FULL
+  // merged map and wins over the base, so a background revalidation can only
+  // add server rows, never clobber local ones. Reset per article.
+  const [overlay, setOverlay] = useState<Record<string, string>>({});
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [prevId, setPrevId] = useState(id);
+  if (prevId !== id) {
+    setPrevId(id);
+    setOverlay({});
+    setActionError(null);
+  }
+  const viewRef = useRef(serverView);
+  // Effect-synced (never written during render): setTranslations only runs
+  // from event handlers and the translate-progress listener, all post-commit,
+  // so the ref is always fresh where it is read.
   useEffect(() => {
-    void load();
-  }, [load]);
+    viewRef.current = serverView;
+  }, [serverView]);
+
+  const baseTranslations = useMemo(
+    () => translationsMap(serverView?.translations ?? []),
+    [serverView],
+  );
+  const translations = useMemo(
+    () => ({ ...baseTranslations, ...overlay }),
+    [baseTranslations, overlay],
+  );
+
+  const setTranslations: Dispatch<SetStateAction<Record<string, string>>> =
+    useCallback((action) => {
+      setOverlay((prev) => {
+        const merged = {
+          ...translationsMap(viewRef.current?.translations ?? []),
+          ...prev,
+        };
+        return typeof action === "function" ? action(merged) : action;
+      });
+    }, []);
+
+  // Load errors surface only when there is no article to show (the
+  // articleViewState contract — a loaded article stays `ready` even if a
+  // later action failed); action errors always surface.
+  const loadError = viewQuery.error == null ? null : String(viewQuery.error);
+  const error = actionError ?? (article ? null : loadError);
 
   const recordedId = useRef<string | undefined>(undefined);
   useEffect(() => {
-    const id = shouldRecordOpen(recordedId.current, article);
-    if (!id) return;
-    recordedId.current = id;
-    void api.markArticleOpened(id).catch(() => {
+    const openId = shouldRecordOpen(recordedId.current, article);
+    if (!openId) return;
+    recordedId.current = openId;
+    void api.markArticleOpened(openId).catch(() => {
       recordedId.current = undefined;
     });
   }, [article]);
 
-  const view = articleViewState({ loading, article, error });
-  return { article, paragraphs, translations, setTranslations, error, setError, loading, view };
+  const view = articleViewState({
+    loading: viewQuery.isLoading,
+    article,
+    error,
+  });
+  return {
+    article,
+    paragraphs,
+    translations,
+    setTranslations,
+    error,
+    setError: setActionError,
+    loading: viewQuery.isLoading,
+    view,
+  };
 }

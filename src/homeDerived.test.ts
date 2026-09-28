@@ -8,14 +8,13 @@ import {
   articleListBlurb,
   articleNeedsCardZh,
   difficultyAdjustment,
+  homeListKey,
   pickTopArticles,
-  topTags,
 } from "./homeDerived";
 
 function item(
   id: string,
   opts: {
-    tags?: string[];
     opened?: boolean;
     category?: string;
     rankScore?: number;
@@ -39,7 +38,6 @@ function item(
     dwell_ms: 0,
     read_completed: false,
     liked: false,
-    tags: opts.tags ?? [],
   };
 }
 
@@ -84,25 +82,6 @@ describe("articleNeedsCardZh", () => {
     expect(articleNeedsCardZh({ summary_zh: "一两句简介。" })).toBe(false);
     expect(articleNeedsCardZh({ summary_zh: "" })).toBe(true);
     expect(articleNeedsCardZh({ summary_zh: "   " })).toBe(true);
-  });
-});
-
-describe("topTags", () => {
-  it("ranks tags by frequency and caps the list", () => {
-    const tags = topTags(
-      [
-        item("a", { tags: ["ai", "economy"] }),
-        item("b", { tags: ["ai"] }),
-        item("c", { tags: ["economy", "chips"] }),
-      ],
-      2,
-    );
-    expect(tags).toEqual(["ai", "economy"]);
-  });
-
-  it("tolerates missing tags and empty input", () => {
-    expect(topTags([], 12)).toEqual([]);
-    expect(topTags([item("a")])).toEqual([]);
   });
 });
 
@@ -181,5 +160,44 @@ describe("applyDifficultyOrder", () => {
       levels,
     );
     expect(ordered.map((a) => a.id)).toEqual(["wall", "plain", "sweet"]);
+  });
+});
+
+describe("homeListKey", () => {
+  const base = {
+    showPicks: true,
+    focusSource: null,
+    read: "unfinished",
+    likedOnly: false,
+    search: undefined,
+  };
+
+  it("is stable for identical inputs (cache hits across remounts)", () => {
+    expect(homeListKey({ ...base })).toEqual(homeListKey({ ...base }));
+  });
+
+  it("splits picks vs library and normalizes undefined search to null", () => {
+    const picks = homeListKey(base);
+    const picksExplicit = homeListKey({ ...base, search: undefined });
+    expect(picks).toEqual(picksExplicit);
+    expect(picks[1]).toBe("ranked");
+    const library = homeListKey({ ...base, showPicks: false });
+    expect(library[1]).toBe("library");
+    expect(picks).not.toEqual(library);
+  });
+
+  it("splits on source/read/liked/search but not on client-side level", () => {
+    // Level refines client-side (matchesLevel) and must not split the key.
+    const a = homeListKey({ ...base, showPicks: false });
+    const b = homeListKey({
+      ...base,
+      showPicks: false,
+      focusSource: "S",
+    });
+    const c = homeListKey({ ...base, showPicks: false, likedOnly: true });
+    const d = homeListKey({ ...base, showPicks: false, read: "all" });
+    const e = homeListKey({ ...base, showPicks: false, search: "fed" });
+    const uniq = new Set([a, b, c, d, e].map((k) => JSON.stringify(k)));
+    expect(uniq.size).toBe(5);
   });
 });

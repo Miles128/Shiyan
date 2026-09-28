@@ -18,24 +18,24 @@ type ReadStateFilter = "all" | "unfinished" | "unread" | "reading" | "read";
  */
 export type ArticleFilter = {
   category?: string;
-  tags?: string[];
   source?: string;
   limit?: number;
   offset?: number;
+  /** Server-side substring match over title / blurb / source. */
+  search?: string;
 };
 
 /**
- * Tauri deserializes an absent argument as `None`, but the empty tag list must
- * not reach the SQL as a filter that matches nothing, so tags are normalized
- * here once rather than at each call site.
+ * Tauri deserializes an absent argument as `None` — normalize once here
+ * rather than at each call site.
  */
 function filterArgs(filter: ArticleFilter) {
   return {
     category: filter.category ?? null,
-    tags: filter.tags && filter.tags.length > 0 ? filter.tags : null,
     source: filter.source ?? null,
     limit: filter.limit ?? null,
     offset: filter.offset ?? null,
+    search: filter.search?.trim() ? filter.search.trim() : null,
   };
 }
 
@@ -65,8 +65,6 @@ export const apiArticles = {
       readState: filter.readState ?? null,
       likedOnly: filter.likedOnly ?? null,
     }),
-  fillMissingTags: (limit?: number) =>
-    invoke<number>("fill_missing_tags", { limit: limit ?? null }),
   getArticleView: (id: string) =>
     invoke<ArticleView | null>("get_article_view", { id }),
   markArticleOpened: (id: string) =>

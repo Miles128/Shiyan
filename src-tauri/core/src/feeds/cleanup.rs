@@ -2,7 +2,7 @@
 
 use super::extract::extract_article_page;
 use super::filters::{is_blocked_content, is_english_article, is_readable_article_body};
-use super::net::HTTP;
+use super::net::http_client;
 use super::MIN_ARTICLE_WORDS;
 use crate::db::{self, Article, DbState};
 use crate::error::AppError;
@@ -42,9 +42,7 @@ pub(crate) fn audit_rss_bodies_once(conn: &Connection) -> Result<usize, AppError
 /// runs again automatically.
 const REFLOW_TRANSLATIONS_KEY_PREFIX: &str = "reflow_translations_cleared_v";
 
-pub(crate) fn clear_stale_paragraph_translations_once(
-    conn: &Connection,
-) -> Result<usize, AppError> {
+pub fn clear_stale_paragraph_translations_once(conn: &Connection) -> Result<usize, AppError> {
     let key = format!(
         "{REFLOW_TRANSLATIONS_KEY_PREFIX}{}",
         crate::reflow::REFLOW_VERSION
@@ -156,9 +154,10 @@ pub fn repair_missing_paragraphs(db: &DbState, limit: usize) -> Result<usize, Ap
         let conn = db.lock_read()?;
         db::articles_without_paragraphs(&conn, limit)?
     };
+    let client = http_client()?;
     let mut fixed = 0usize;
     for article in targets {
-        let Ok(page) = extract_article_page(&HTTP, &article.url) else {
+        let Ok(page) = extract_article_page(&client, &article.url) else {
             continue;
         };
         if !page.text.contains('\n') || !is_readable_article_body(&page.text) {

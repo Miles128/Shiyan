@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useShell } from "../store";
 import { useToast } from "./Toaster";
-import type { FeedSource } from "../api";
+import { api, type FeedCategory, type FeedSource } from "../api";
 
 /** Stable accent per category so the tree and the collapsed rail read alike. */
 const CATEGORY_COLOR: Record<string, string> = {
@@ -10,6 +10,8 @@ const CATEGORY_COLOR: Record<string, string> = {
   world: "#2f5d8a",
   other: "#6f6a63",
 };
+/** Extra accents for user-created categories, picked deterministically. */
+const CUSTOM_COLORS = ["#7a4fa3", "#b5542d", "#2d7db5", "#4fa372", "#a34f6e", "#6e7a2d"];
 /** Fixed top-level order for the built-in categories (mirrors the DB seed). */
 const CATEGORY_ORDER: { id: string; label: string }[] = [
   { id: "tech", label: "科技" },
@@ -17,8 +19,6 @@ const CATEGORY_ORDER: { id: string; label: string }[] = [
   { id: "world", label: "国际" },
   { id: "other", label: "其他" },
 ];
-const TOP_PICKS_KEY = "__picks__";
-
 /** Drag-to-resize width: persisted so the choice survives route changes. */
 const WIDTH_KEY = "shiyan.sidebarWidth";
 const MIN_SIDEBAR_W = 200;
@@ -38,18 +38,11 @@ function loadSidebarWidth(): number {
 }
 
 function dotColor(category: string): string {
-  return CATEGORY_COLOR[category] ?? "#6f6a63";
-}
-function categoryLabel(id: string): string {
-  return CATEGORY_ORDER.find((c) => c.id === id)?.label ?? id;
-}
-
-function IconFilter() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M3 5h18l-7 8v5l-4 2v-7z" />
-    </svg>
-  );
+  const direct = CATEGORY_COLOR[category];
+  if (direct) return direct;
+  let h = 0;
+  for (const c of category) h = (h * 31 + c.codePointAt(0)!) | 0;
+  return CUSTOM_COLORS[Math.abs(h) % CUSTOM_COLORS.length];
 }
 
 type Props = {
@@ -67,26 +60,38 @@ type Props = {
 export default function Sidebar({ collapsed, onExpand }: Props) {
   const {
     feeds,
+    reloadFeeds,
     commitFeedOrder,
-    selectedTags,
-    toggleTag,
-    clearTags,
-    availableTags,
-    topPickSources,
-    filtersOpen,
-    setFiltersOpen,
     focusSource,
     setFocusSource,
   } = useShell();
   const toast = useToast();
 
-  // Expanded branches; categories start open so the priority list is usable,
-  // 今日推荐 starts collapsed (it is a glance, not a work surface).
-  const [open, setOpen] = useState<Record<string, boolean>>(() => {
-    const init: Record<string, boolean> = { [TOP_PICKS_KEY]: false };
-    for (const c of CATEGORY_ORDER) init[c.id] = true;
-    return init;
-  });
+  // Categories are DB-driven (built-ins + user-created). Reloaded whenever
+  // feeds reload so a new category appears without an app restart.
+  const [cats, setCats] = useState<FeedCategory[]>([]);
+  useEffect(() => {
+    let alive = true;
+    void api
+      .listFeedCategories()
+      .then((list) => {
+        if (alive) setCats(list);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [feeds, reloadFeeds]);
+
+  const labelById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of CATEGORY_ORDER) m.set(c.id, c.label);
+    for (const c of cats) m.set(c.id, c.label);
+    return m;
+  }, [cats]);
+
+  // Expanded branches; unknown keys default to open (`!== false` below).
+  const [open, setOpen] = useState<Record<string, boolean>>({});
   const toggle = (key: string) => setOpen((s) => ({ ...s, [key]: !s[key] }));
 
   // Pointer-based sortable. Drag lives entirely in refs + imperative transforms:
@@ -153,8 +158,9 @@ export default function Sidebar({ collapsed, onExpand }: Props) {
     window.addEventListener("pointercancel", up);
   }
 
-  // Group feeds by category, preserving the backend's (category, priority DESC)
-  // order. Unknown / custom categories are appended after the built-ins.
+  // Group feeds by category: built-ins in seed order, then user-created
+  // categories in DB order (builtin DESC, label). Feeds whose category is
+  // unknown to the DB still get a group so nothing disappears.
   const grouped = useMemo(() => {
     const byCat = new Map<string, FeedSource[]>();
     for (const f of feeds) {
@@ -162,7 +168,10 @@ export default function Sidebar({ collapsed, onExpand }: Props) {
       if (arr) arr.push(f);
       else byCat.set(f.category, [f]);
     }
-    const order: string[] = CATEGORY_ORDER.map((c) => c.id);
+    const order: string[] = [
+      ...CATEGORY_ORDER.map((c) => c.id),
+      ...cats.filter((c) => !CATEGORY_ORDER.some((b) => b.id === c.id)).map((c) => c.id),
+    ];
     for (const cat of byCat.keys()) if (!order.includes(cat)) order.push(cat);
     return order
       .filter((cat) => (byCat.get(cat)?.length ?? 0) > 0)
@@ -173,9 +182,9 @@ export default function Sidebar({ collapsed, onExpand }: Props) {
           ...list.filter((f) => f.enabled),
           ...list.filter((f) => !f.enabled),
         ];
-        return { cat, label: categoryLabel(cat), feeds: sorted };
+        return { cat, label: labelById.get(cat) ?? cat, feeds: sorted };
       });
-  }, [feeds]);
+  }, [feeds, cats, labelById]);
 
   function commitMove(cat: string, from: number, to: number) {
     const group = grouped.find((g) => g.cat === cat);
@@ -291,16 +300,6 @@ export default function Sidebar({ collapsed, onExpand }: Props) {
             <path d="m9 18 6-6-6-6" />
           </svg>
         </button>
-        <div className="rail-dots" onClick={onExpand} role="button" title="展开查看订阅源优先级">
-          {grouped.flatMap((g) => g.feeds).slice(0, 14).map((f) => (
-            <span
-              key={f.id}
-              className="rail-dot"
-              style={{ background: dotColor(f.category), opacity: f.enabled ? 1 : 0.35 }}
-              title={f.name}
-            />
-          ))}
-        </div>
       </aside>
     );
   }
@@ -308,7 +307,7 @@ export default function Sidebar({ collapsed, onExpand }: Props) {
   return (
     <aside
       className="sidebar"
-      aria-label="订阅源与标签"
+      aria-label="订阅源"
       style={{ width, flexBasis: width }}
     >
       <div
@@ -323,46 +322,18 @@ export default function Sidebar({ collapsed, onExpand }: Props) {
         <span className="sidebar-wordmark" data-tauri-drag-region>
           订阅
         </span>
-        <button
-          type="button"
-          className={`iconlike sidebar-filter${filtersOpen ? " active" : ""}`}
-          onClick={() => setFiltersOpen(!filtersOpen)}
-          title="筛选"
-          aria-label="筛选"
-          aria-expanded={filtersOpen}
-        >
-          <IconFilter />
-        </button>
       </div>
 
       <div className="sidebar-scroll">
-        {/* 今日推荐: the default main-list view; expands to show contributing sources. */}
+        {/* 今日推荐: the default main-list view — a plain highlight row. */}
         <div className="tree-node">
           <button
             type="button"
             className={"tree-branch" + (focusSource === null ? " active" : "")}
-            onClick={() => {
-              setFocusSource(null);
-              toggle(TOP_PICKS_KEY);
-            }}
-            aria-expanded={!!open[TOP_PICKS_KEY]}
+            onClick={() => setFocusSource(null)}
           >
-            <span className="tree-sign">{open[TOP_PICKS_KEY] ? "−" : "+"}</span>
             <span className="tree-label">今日推荐</span>
           </button>
-          {open[TOP_PICKS_KEY] && (
-            <div className="tree-children">
-              {topPickSources.length > 0 ? (
-                topPickSources.map((s) => (
-                  <div key={s} className="tree-leaf is-static">
-                    <span className="source-name">{s}</span>
-                  </div>
-                ))
-              ) : (
-                <div className="tree-leaf is-static is-empty">暂无精选</div>
-              )}
-            </div>
-          )}
         </div>
 
         {grouped.map((g) => (
@@ -409,33 +380,6 @@ export default function Sidebar({ collapsed, onExpand }: Props) {
           </div>
         ))}
 
-        {availableTags.length > 0 && (
-          <section className="sidebar-section sidebar-tags-section">
-            <div className="sidebar-head">
-              <span className="sidebar-title">标签</span>
-              {selectedTags.length > 0 && (
-                <button type="button" className="sidebar-clear" onClick={clearTags}>
-                  清除
-                </button>
-              )}
-            </div>
-            <div className="sidebar-tags">
-              {availableTags.map((tag) => {
-                const on = selectedTags.includes(tag);
-                return (
-                  <button
-                    key={tag}
-                    type="button"
-                    className={on ? "tag-chip active" : "tag-chip"}
-                    onClick={() => toggleTag(tag)}
-                  >
-                    {tag}
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-        )}
       </div>
     </aside>
   );

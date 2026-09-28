@@ -70,9 +70,13 @@ impl Drop for InflightGuard {
 /// holder may have filled the row (or failed, leaving it for us).
 fn claim_inflight_key(key: &str) -> Result<InflightGuard, AppError> {
     let (lock, cvar) = &*INFLIGHT_TRANSLATIONS;
-    let mut inflight = lock.lock().map_err(|_| AppError::Locked)?;
+    let mut inflight = lock
+        .lock()
+        .map_err(|_| AppError::msg("翻译排队中，请稍候"))?;
     while inflight.contains(key) {
-        inflight = cvar.wait(inflight).map_err(|_| AppError::Locked)?;
+        inflight = cvar
+            .wait(inflight)
+            .map_err(|_| AppError::msg("翻译排队中，请稍候"))?;
     }
     inflight.insert(key.to_string());
     Ok(InflightGuard {

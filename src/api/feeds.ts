@@ -37,4 +37,5 @@ export const apiFeeds = {
       },
     }),
   refreshFeeds: () => invoke<RefreshResult>("refresh_feeds"),
+  cancelRefresh: () => invoke<void>("cancel_refresh"),
 };

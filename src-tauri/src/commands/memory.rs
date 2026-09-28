@@ -2,8 +2,38 @@ use crate::db::{self, DbState, LookupEntry, MemoryItem};
 use crate::error::AppError;
 use crate::srs::{apply_rating, Rating};
 use crate::vocab::{self, AddMemoryInput};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
+
+/// Enrich a just-saved memory item in the background: call the LLM, fill only
+/// the still-empty fields of the stored row, then emit `memory-updated` so any
+/// open library view can refresh. Fire-and-forget — failures (e.g. no API key
+/// configured) are silently dropped and the row keeps what was saved
+/// synchronously.
+///
+/// Shell-side glue only: the LLM call and the row merge live in
+/// `shiyan_core::vocab`; this wrapper exists because state access and the
+/// event emit need the `AppHandle`. Runs on Tauri's bounded blocking pool
+/// (not a raw OS thread per save) so rapid saves can't spawn unbounded threads.
+fn enrich_memory_background(app: AppHandle, item: MemoryItem) {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Ok(cfg) = crate::config::load_config() else {
+            return;
+        };
+        let Some(enrichment) = vocab::enrich_memory_fields(&cfg, &item) else {
+            return;
+        };
+        let Some(state) = app.try_state::<DbState>() else {
+            return;
+        };
+        let Ok(conn) = state.lock_write() else {
+            return;
+        };
+        if let Ok(Some(updated)) = vocab::apply_memory_enrichment(&conn, &item, &enrichment) {
+            let _ = app.emit("memory-updated", &updated);
+        }
+    });
+}
 
 #[tauri::command]
 pub async fn add_memory(app: AppHandle, input: AddMemoryInput) -> Result<MemoryItem, AppError> {
@@ -14,7 +44,7 @@ pub async fn add_memory(app: AppHandle, input: AddMemoryInput) -> Result<MemoryI
     // LLM enrichment (word_type / collocations / missing definition) runs in
     // the background — the UI must not wait seconds on an API round-trip.
     if vocab::needs_enrichment(&item) {
-        vocab::enrich_memory_background(app, item.clone());
+        enrich_memory_background(app, item.clone());
     }
     Ok(item)
 }

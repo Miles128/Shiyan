@@ -5,7 +5,7 @@ import FeedDiscoverSection, {
   type DiscoverRow,
 } from "./FeedDiscoverSection";
 import { categoryLabel } from "../readerUtils";
-import { useShell } from "../store";
+import { useFeeds } from "../store";
 import { useToast } from "./Toaster";
 
 type AddTab = "discover" | "paste" | "article";
@@ -17,7 +17,7 @@ export default function ManageFeeds() {
   // The sidebar already owns the feed list; subscribing, muting or deleting
   // here reloads that one copy so the tree updates without waiting for the
   // next refresh. Only the category table is local to this page.
-  const { feeds, reloadFeeds } = useShell();
+  const { feeds, reloadFeeds } = useFeeds();
   const [categories, setCategories] = useState<FeedCategory[]>([]);
   const [categoryId, setCategoryId] = useState("all");
   const [newCatLabel, setNewCatLabel] = useState("");
@@ -65,7 +65,7 @@ export default function ManageFeeds() {
       await api.setFeedEnabled(id, enabled);
       await reloadFeeds();
     } catch (e) {
-      toast.err(String(e));
+      setError(`切换订阅状态失败：${String(e)}`);
     }
   }
 
@@ -83,7 +83,7 @@ export default function ManageFeeds() {
       await reloadFeeds();
       toast.ok(`已删除订阅源：${feed.name}`);
     } catch (e) {
-      toast.err(String(e));
+      setError(`删除订阅源失败：${String(e)}`);
     }
   }
 
@@ -100,7 +100,7 @@ export default function ManageFeeds() {
       setCategoryId(cat.id);
       toast.ok(`已添加分类「${cat.label}」`);
     } catch (err) {
-      toast.err(String(err));
+      setError(`添加分类失败：${String(err)}`);
     } finally {
       setAddingCat(false);
     }
@@ -117,7 +117,7 @@ export default function ManageFeeds() {
         subscribed: subscribedUrls.has(c.url.trim()),
       }));
       setCandidates(rows);
-      toast.ok(`找到 ${rows.length} 个候选，正在校验…`);
+      // 校验进度直接体现在每行状态（校验中…/可用/不可用），不弹 toast。
       for (let i = 0; i < rows.length; i++) {
         setCandidates((prev) =>
           prev.map((r, idx) => (idx === i ? { ...r, validating: true } : r)),
@@ -148,9 +148,9 @@ export default function ManageFeeds() {
           );
         }
       }
-      toast.ok("校验完成，可订阅可用源");
+      // 校验结果直接体现在每行状态，不弹 toast。
     } catch (e) {
-      setError(String(e));
+      setError(`发现订阅源失败：${String(e)}`);
     } finally {
       setDiscovering(false);
     }
@@ -178,7 +178,7 @@ export default function ManageFeeds() {
       await reloadFeeds();
       toast.ok(`已订阅：${row.name}`);
     } catch (e) {
-      toast.err(String(e));
+      setError(`订阅失败：${String(e)}`);
     }
   }
 
@@ -191,11 +191,11 @@ export default function ManageFeeds() {
     try {
       const article = await api.importArticleUrl(url);
       setArticleUrl("");
-      toast.ok(`已导入文章：${article.title}`);
+      // 落地阅读页本身就是反馈，不弹 toast。
       // Same behavior as file import: land the reader on the fresh article.
       navigate(`/article/${article.id}`);
     } catch (err) {
-      toast.err(String(err));
+      setError(`导入失败：${String(err)}`);
     } finally {
       setImportingArticle(false);
     }
@@ -226,7 +226,7 @@ export default function ManageFeeds() {
       await reloadFeeds();
       toast.ok(`已订阅：${name}`);
     } catch (err) {
-      toast.err(String(err));
+      setError(`订阅失败：${String(err)}`);
     } finally {
       setPasting(false);
     }
@@ -318,7 +318,7 @@ export default function ManageFeeds() {
         <p className="muted feed-hint">精选源不支持删除，可取消勾选停用。</p>
       </section>
 
-      <details className="feeds-add-block">
+      <details className="feeds-add-block" open>
         <summary>添加订阅 / 导入文章</summary>
         <div className="tabs feeds-add-tabs">
           {(

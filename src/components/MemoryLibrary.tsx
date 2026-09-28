@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { clipContext } from "../readerUtils";
 import { api, type MemoryItem, type MemoryKind } from "../api";
+import { fetchQuery, invalidateQueries, useQuery } from "../query";
 import { useTts } from "../useTts";
-import { useToast } from "./Toaster";
 
 type Tab = "learning" | "review" | "mastered";
 
@@ -47,36 +47,50 @@ export default function MemoryLibrary({
   onChanged,
 }: Props) {
   const [tab, setTab] = useState<Tab>("learning");
-  const [items, setItems] = useState<MemoryItem[]>([]);
-  const [due, setDue] = useState<MemoryItem[]>([]);
   const [current, setCurrent] = useState<MemoryItem | null>(null);
   const [flipped, setFlipped] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [q, setQ] = useState("");
   /** Free-practice deck (shuffled learning list); non-null = practice mode, no SRS writes. */
   const [practiceDeck, setPracticeDeck] = useState<MemoryItem[] | null>(null);
+  /** Shown inline when a practice deck is exhausted (replaces the old toast). */
+  const [practiceDone, setPracticeDone] = useState(false);
+  /** Card id with a review write in flight (see rate). */
+  const ratingRef = useRef<string | null>(null);
   const tts = useTts();
-  const toast = useToast();
 
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      if (tab === "review") {
-        const d = await api.dueMemory(kind);
-        setDue(d);
-        setCurrent(d[0] ?? null);
-        setFlipped(false);
-      } else {
-        setItems(await api.listMemory(kind, tab));
-      }
-    } catch (e) {
-      setError(String(e));
-    }
-  }, [kind, tab]);
+  // Replace-model reads: tab switches paint the cached list instantly and
+  // revalidate; status/delete mutations below invalidate so the mounted list
+  // reloads itself — no manual load() threading.
+  const listTab = tab === "review" ? null : tab;
+  const listQuery = useQuery(
+    listTab ? ["memory", kind, listTab] : null,
+    () => api.listMemory(kind, listTab ?? "learning"),
+  );
+  const dueQuery = useQuery(
+    tab === "review" ? ["memory", kind, "due"] : null,
+    () => api.dueMemory(kind),
+  );
+  const items = listQuery.data ?? [];
+  // Review cursor advances locally (see rate): the shadow masks the query
+  // until the next genuine reload (tab enter / mutation invalidation), which
+  // clears it and restarts at the first card — the old load() did the same.
+  const [localDue, setLocalDue] = useState<MemoryItem[] | null>(null);
+  const due = localDue ?? dueQuery.data ?? [];
+  const queryError = listQuery.error ?? dueQuery.error;
+  const error =
+    actionError ?? (queryError == null ? null : String(queryError));
 
+  // A fresh due list (tab enter, kind switch, post-mutation reload) clears
+  // the local advance shadow and restarts the review cursor at the first
+  // card — the old load() did the same.
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (dueQuery.data) {
+      setLocalDue(null);
+      setCurrent(dueQuery.data[0] ?? null);
+      setFlipped(false);
+    }
+  }, [dueQuery.data]);
 
   // Leaving the review tab ends practice mode.
   useEffect(() => {
@@ -105,15 +119,26 @@ export default function MemoryLibrary({
       return;
     }
     if (!current) return;
+    // Drop repeats while a write for this card is in flight: the keyboard
+    // effect holds a stale `current` until re-render, so a held key (or a
+    // fast double press) would record the same card twice and over-promote
+    // it. Retries after a failure are unaffected (ref cleared in finally).
+    if (ratingRef.current === current.id) return;
+    ratingRef.current = current.id;
     try {
       await api.reviewMemory(current.id, rating);
       onChanged?.();
+      // Local advance only: the rated card drops out of view immediately.
+      // The query cache keeps the pre-rate list (refreshed on next mount);
+      // invalidating here would yank the cursor back to the first card.
       const rest = due.filter((d) => d.id !== current.id);
-      setDue(rest);
+      setLocalDue(rest);
       setCurrent(rest[0] ?? null);
       setFlipped(false);
     } catch (e) {
-      setError(String(e));
+      setActionError(String(e));
+    } finally {
+      ratingRef.current = null;
     }
   }
 
@@ -124,32 +149,39 @@ export default function MemoryLibrary({
 
   async function startPractice() {
     try {
-      const list = await api.listMemory(kind, "learning");
+      // Read through the shared cache so the list tab paints instantly next.
+      const list = await fetchQuery(["memory", kind, "learning"], () =>
+        api.listMemory(kind, "learning"),
+      );
       if (list.length === 0) {
-        toast.ok("学习库还是空的，先去积累几个生词吧。");
+        setActionError("学习库还是空的，先去积累几个生词吧。");
         return;
       }
+      setPracticeDone(false);
       setPracticeDeck(shuffled(list));
       setFlipped(false);
     } catch (e) {
-      setError(String(e));
+      setActionError(String(e));
     }
   }
 
-  // Practice deck exhausted → wrap up.
+  // Practice deck exhausted → inline completion state (stays visible).
   useEffect(() => {
     if (practiceDeck && practiceDeck.length === 0) {
       setPracticeDeck(null);
       setFlipped(false);
-      toast.ok("练习完成！");
+      setPracticeDone(true);
     }
-  }, [practiceDeck, toast]);
+  }, [practiceDeck]);
 
   // Keyboard: Space/Enter flips, 1/2/3 rate (or advance in practice mode).
   useEffect(() => {
     if (tab !== "review") return;
     const activeCard = practiceDeck ? practiceDeck[0] ?? null : current;
     const onKey = (e: KeyboardEvent) => {
+      // Held keys auto-repeat: without this, holding Space/1 flips or rates
+      // the same card on every repeat (see the ratingRef guard in rate).
+      if (e.repeat) return;
       const el = document.activeElement;
       // Let buttons, links, and form controls handle their own Enter/Space.
       if (
@@ -179,95 +211,115 @@ export default function MemoryLibrary({
   async function setStatus(id: string, status: string) {
     try {
       await api.setMemoryStatus(id, status);
-      await load();
+      // The mounted list/due queries reload themselves on invalidation.
+      setActionError(null);
+      invalidateQueries(["memory", kind]);
       onChanged?.();
     } catch (e) {
-      setError(String(e));
+      setActionError(String(e));
     }
   }
 
   async function remove(id: string) {
     try {
       await api.deleteMemory(id);
-      await load();
+      setActionError(null);
+      invalidateQueries(["memory", kind]);
       onChanged?.();
     } catch (e) {
-      setError(String(e));
+      setActionError(String(e));
     }
   }
 
   return (
     <>
-      <div className="tabs">
-        {(
-          [
-            ["learning", "学习中"],
-            ["review", "复习"],
-            ["mastered", "已掌握"],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            className={tab === id ? "tab active" : "tab"}
-            onClick={() => setTab(id)}
-          >
-            {label}
-          </button>
-        ))}
+      <div className="vocab-toolbar">
+        <div className="tabs">
+          {(
+            [
+              ["learning", "学习中"],
+              ["review", "复习"],
+              ["mastered", "已掌握"],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              className={tab === id ? "tab active" : "tab"}
+              onClick={() => setTab(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {tab !== "review" && (
+          <input
+            className="search vocab-toolbar-search"
+            placeholder={searchPlaceholder}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        )}
       </div>
 
       {error && <p className="banner err">{error}</p>}
 
       {tab !== "review" && (
         <>
-          <input
-            className="search"
-            placeholder={searchPlaceholder}
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
           <ul className="vocab-list">
             {filtered.map((v) => (
-              <li key={v.id} className="vocab-card">
-                <div className="vocab-head">
-                  <strong>{v.term}</strong>
-                  {v.word_type && (
-                    <span className="pill">{typeLabel(kind, v.word_type)}</span>
-                  )}
-                </div>
-                <p>{v.definition_zh}</p>
-                {v.collocations?.length > 0 && (
-                  <p className="muted">
-                    常见搭配：{v.collocations.join(" · ")}
-                  </p>
-                )}
-                {v.context_sentence && (
-                  <p className="context">“{clipContext(v.context_sentence)}”</p>
-                )}
-                <div className="row-actions">
-                  {tab === "learning" && (
+              <li key={v.id} className="vocab-row">
+                <button
+                  type="button"
+                  className="vocab-term"
+                  onClick={() => speakTerm(v.term)}
+                  title="点击朗读"
+                >
+                  {v.term}
+                </button>
+                <span className="vocab-zh" title={v.definition_zh || undefined}>
+                  {v.definition_zh || <span className="muted">暂无释义</span>}
+                </span>
+                <span className="vocab-row-actions">
+                  {tab === "learning" ? (
                     <button
-                      className="btn small"
+                      type="button"
+                      className="vocab-icon-btn"
+                      title="标为已掌握"
+                      aria-label={`标为已掌握：${v.term}`}
                       onClick={() => void setStatus(v.id, "mastered")}
                     >
-                      标记已掌握
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        <path d="M20 6 9 17l-5-5" />
+                      </svg>
                     </button>
-                  )}
-                  {tab === "mastered" && (
+                  ) : (
                     <button
-                      className="btn small"
+                      type="button"
+                      className="vocab-icon-btn"
+                      title="恢复学习"
+                      aria-label={`恢复学习：${v.term}`}
                       onClick={() => void setStatus(v.id, "learning")}
                     >
-                      恢复学习
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        <path d="M3 12a9 9 0 1 0 2.64-6.36" />
+                        <path d="M3 4v5h5" />
+                      </svg>
                     </button>
                   )}
                   <button
-                    className="btn small danger"
+                    type="button"
+                    className="vocab-icon-btn danger"
+                    title="删除"
+                    aria-label={`删除：${v.term}`}
                     onClick={() => void remove(v.id)}
                   >
-                    删除
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M3 6h18" />
+                      <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                    </svg>
                   </button>
-                </div>
+                </span>
               </li>
             ))}
             {filtered.length === 0 && <p className="muted">{emptyText}</p>}
@@ -281,6 +333,20 @@ export default function MemoryLibrary({
             const activeCard = practiceDeck ? practiceDeck[0] ?? null : current;
             const deckDone = practiceDeck !== null && practiceDeck.length === 0;
             if (deckDone) return null;
+            if (practiceDone && !activeCard) {
+              return (
+                <>
+                  <p className="muted">练习完成！</p>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => void startPractice()}
+                  >
+                    再练一组
+                  </button>
+                </>
+              );
+            }
             if (!activeCard) {
               return (
                 <>

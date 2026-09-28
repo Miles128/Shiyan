@@ -228,3 +228,48 @@ export function difficultyClassName(level: DifficultyLevel): string {
   return `difficulty-badge d-${level}`;
 }
 
+export type DifficultyScoreEntry = {
+  excerpt: string;
+  score: number | null;
+};
+
+/**
+ * Per-article difficulty score cache. The Home pass recomputes every visible
+ * row on each mount (Reader → Home = ~60 tokenize + dict passes, ~25ms of
+ * main-thread freeze, doubled by dev StrictMode); keyed by article +
+ * excerpt + vocab identity so returns are hits. Same insertion-order cap
+ * semantics the Home hook previously implemented inline per mount — now
+ * shared across mounts. Pure (test-constructible); the app uses the
+ * singleton below.
+ */
+export class DifficultyScoreCache {
+  private readonly entries = new Map<string, DifficultyScoreEntry>();
+  constructor(private readonly cap = 1000) {}
+
+  get(key: string, excerpt: string): DifficultyScoreEntry | undefined {
+    const hit = this.entries.get(key);
+    return hit && hit.excerpt === excerpt ? hit : undefined;
+  }
+
+  set(key: string, excerpt: string, score: number | null): void {
+    this.entries.delete(key);
+    this.entries.set(key, { excerpt, score });
+    while (this.entries.size > this.cap) {
+      const oldest = this.entries.keys().next();
+      if (oldest.done) break;
+      this.entries.delete(oldest.value);
+    }
+  }
+
+  get size(): number {
+    return this.entries.size;
+  }
+
+  clear(): void {
+    this.entries.clear();
+  }
+}
+
+/** App-wide score cache used by useHomeDifficulty. */
+export const difficultyScoreCache = new DifficultyScoreCache();
+

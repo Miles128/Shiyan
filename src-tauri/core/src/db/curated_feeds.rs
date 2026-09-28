@@ -15,10 +15,10 @@ struct CuratedFeed {
 
 /// Classic news + well-known blogs/newsletters + AI-oriented tech.
 /// Prefer free/full-text article feeds; no podcasts (show notes only).
-pub fn curated_feeds() -> Vec<FeedSource> {
-    let feeds: Vec<CuratedFeed> =
-        serde_json::from_str(CURATED_FEEDS_JSON).expect("valid resources/curated_feeds.json");
-    feeds
+pub fn curated_feeds() -> Result<Vec<FeedSource>, crate::error::AppError> {
+    let feeds: Vec<CuratedFeed> = serde_json::from_str(CURATED_FEEDS_JSON)
+        .map_err(|e| crate::error::AppError::msg(format!("内置订阅源解析失败：{e}")))?;
+    Ok(feeds
         .into_iter()
         .map(|f| FeedSource {
             id: f.id,
@@ -30,5 +30,5 @@ pub fn curated_feeds() -> Vec<FeedSource> {
             description: String::new(),
             ..Default::default()
         })
-        .collect()
+        .collect())
 }

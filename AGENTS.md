@@ -7,8 +7,8 @@
 - **桌面框架**: Tauri 2（仅面向 macOS）
 - **前端**: React 19 + TypeScript + Vite 7 + react-router-dom 7（HashRouter）
 - **后端**: Rust（rusqlite/bundled SQLite、reqwest blocking、feed-rs、readability、pdf-extract）
-- **类型同步**: ts-rs 从 Rust 结构体生成 TS 绑定到 `src-tauri/bindings/`，前端经 `src/api/types.ts` re-export 使用
-- **测试**: 前端 vitest；后端 cargo test
+- **类型同步**: ts-rs 从 Rust 结构体生成 TS 绑定到 `src-tauri/core/bindings/`，前端经 `src/api/types.ts` re-export 使用
+- **测试**: 前端 vitest；后端 cargo test（workspace：core + 壳）
 
 ## 目录结构
 
@@ -29,24 +29,29 @@ src/                  React 前端
   annotateText.tsx    按CEFR/词频给难词加下划线
   wordLevels.ts       懒加载内置 CEFR+词频词典(word-levels.json)
   tts.ts/useTts.ts    Web Speech 朗读
-src-tauri/src/        Rust 后端
-  lib.rs              应用入口：打开 SQLite(app_data_dir) 注入 DbState(读写双连接)，注册全部 command
-  commands/           Tauri command 薄层(articles/config/feeds/known/memory)：阻塞工作 spawn_blocking，进度走 event("refresh-progress"/"translate-progress")
-  db/                 仓储层：mod(schema+migration) articles feeds curated_feeds(内置订阅源种子) translations memory(生词+短语统一表) known(已认识词)
-  feeds/              RSS 管线（按职责分模块）：net(HTTP/SSRF/URL校验) filters(可读性/英文/屏蔽/付费墙) extract(页面抽取) dedup(URL/标题去重) pipeline(refresh主流程) cleanup(审计/清理/修复) enrich(翻译/标签回填) import(URL导入) tests
-  vocab.rs            OpenAI 兼容 LLM 客户端：段落翻译、生词/短语 enrichment、RSS 发现
-  translate.rs        翻译缓存 + 编排层
-  rank.rs             兴趣排序：freshness×亲和度 + 显式信号 + tag IDF
-  srs.rs              简化间隔重复：again/hard/easy，连续 easy≥3 且 14d 即 mastered
-  reflow.rs           段落整形
-  import_file.rs      txt/pdf/docx 本地导入
-  db_tests.rs         DB 层集成测试
-  config.rs           config.local.json 读写(API key 等)，0600 权限
+src-tauri/            Cargo workspace（target/ 仍是唯一产物目录）
+  src/                壳 crate `shiyan`：只含 Tauri 胶水，不写业务
+    lib.rs            应用入口：打开 SQLite(app_data_dir) 注入 DbState(读写双连接)，注册全部 command；对 shiyan-core 做 `use` 重导出，commands 里 `crate::db::…` 路径不变
+    commands/         Tauri command 薄层(articles/config/feeds/known/memory)：阻塞工作 spawn_blocking，进度走 event("refresh-progress"/"translate-progress")；后台 enrichment 胶水(enrich_memory_background)也在这里
+  core/               业务 crate `shiyan-core`：零 tauri 依赖（写 `use tauri::` 直接编译不过），改核心逻辑用 `cargo check/test -p shiyan-core` 编译面更小
+    src/db/           仓储层：mod(schema+migration) articles feeds curated_feeds(内置订阅源种子) translations memory(生词+短语统一表) known(已认识词)
+    src/feeds/        RSS 管线（按职责分模块）：net(HTTP/SSRF/URL校验) filters(可读性/英文/屏蔽/付费墙) extract(页面抽取) dedup(URL/标题去重) pipeline(refresh主流程) cleanup(审计/清理/修复) enrich(翻译/标签回填) import(URL导入) tests
+    src/vocab.rs      OpenAI 兼容 LLM 客户端：段落翻译、生词/短语 enrichment、RSS 发现
+    src/translate.rs  翻译缓存 + 编排层
+    src/rank.rs       兴趣排序：freshness×亲和度 + 显式信号 + tag IDF
+    src/srs.rs        简化间隔重复：again/hard/easy，连续 easy≥3 且 14d 即 mastered
+    src/reflow.rs     段落整形（core 内部，仅 feeds/测试调用）
+    src/import_file.rs txt/pdf/docx 本地导入
+    src/article_view.rs Reader 载荷组装(ArticleView = 文章+段落+缓存翻译)
+    src/db_tests.rs   DB 层集成测试
+    src/config.rs     config.local.json 读写(API key 等)，0600 权限
+    bindings/         ts-rs 生成的 TS 绑定
+    resources/        curated_feeds.json（include_str 进 db 层）
 ```
 
 ## 数据流与关键约定
 
-- 前端一律经 `api/*` invoke 后端 command；后端分层 commands → (feeds/vocab/translate/import_file 业务) → db 仓储，db 不做网络。
+- 前端一律经 `api/*` invoke 后端 command；后端分两个 crate：壳(commands) → core 业务(feeds/vocab/translate/import_file) → db 仓储，db 不做网络。core 禁止依赖 tauri：状态解析与事件发射只属于壳，core 的进度/通知经回调函数外流；新业务进 core，新 command 进壳。
 - 同一 WAL 库上开读写双连接，`DbState { write, read }` 各一把 Mutex；写走 `lock_write`、读走 `lock_read`（读不再排在写后面）；命令内 lock 后尽快释放，网络调用不持锁。
 - 文章幂等去重按 `url UNIQUE`，`insert_article_if_new` 冲突即跳过；RSS 旧文只在 RSS 正文可信且更长时升级。
 - 正文阈值：RSS 正文 ≥2000 字符且像可读文章才信任；否则须抓文章页。导航/关键词墙、链接列表、不足 400 字散文（MIN_FULLTEXT_CHARS）一律不入库，刷新时清掉。

@@ -88,7 +88,6 @@ pub fn import_article_from_file(db: &DbState, path: &str) -> Result<Article, App
         dwell_ms: 0,
         read_completed: false,
         liked: false,
-        tags: vec![],
     };
 
     {

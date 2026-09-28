@@ -8,8 +8,9 @@ import {
   shouldHideAppNav,
   shouldShowPlacementNav,
 } from "./placement/engine";
-import { useAppConfig } from "./store";
+import { useAppConfig, useFilters, useSearchQuery } from "./store";
 import { useToast } from "./components/Toaster";
+import { emitEvent } from "./events";
 import Sidebar from "./components/Sidebar";
 import { applyTheme, isThemePref } from "./theme";
 import { api } from "./api";
@@ -57,6 +58,52 @@ function IconSettings() {
   );
 }
 
+function IconStats() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 3v18h18" />
+      <path d="M7 15v3" />
+      <path d="M12 10v8" />
+      <path d="M17 6v12" />
+    </svg>
+  );
+}
+
+function IconRefresh() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+      <path d="M21 3v6h-6" />
+    </svg>
+  );
+}
+
+function IconSearch() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="11" cy="11" r="7" />
+      <path d="m21 21-4.3-4.3" />
+    </svg>
+  );
+}
+
+function IconFilter() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 5h18l-7 8v5l-4 2v-7z" />
+    </svg>
+  );
+}
+
+function IconClose() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+      <line x1="6" y1="6" x2="18" y2="18" />
+      <line x1="18" y1="6" x2="6" y2="18" />
+    </svg>
+  );
+}
+
 function IconSidebar() {
   return (
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -69,10 +116,14 @@ function IconSidebar() {
 export default function App() {
   const [progress, setProgress] = useState<RefreshProgress | null>(null);
   const [importingFile, setImportingFile] = useState(false);
+  /** Home search input is collapsed until opened or text is present. */
+  const [searchOpen, setSearchOpen] = useState(false);
   const toast = useToast();
   const navigate = useNavigate();
   const location = useLocation();
   const { cfg, ready, loadError, refresh } = useAppConfig();
+  const { query, setQuery } = useSearchQuery();
+  const { filtersOpen, setFiltersOpen } = useFilters();
 
   useEffect(() => {
     let cancelled = false;
@@ -110,11 +161,26 @@ export default function App() {
     }
   }, [cfg, ready, loadError, location.pathname, navigate]);
 
-  // Top-bar page buttons act as toggles: clicking the active page goes home.
-  function toggleNav(e: React.MouseEvent, to: string) {
-    if (location.pathname === to) {
-      e.preventDefault();
-      navigate("/");
+  // NavLinks behave by platform convention: clicking the active page is a
+  // no-op. Home is one click away on the brand (拾言).
+
+  // Subscription refresh lives here (topbar) but reloads Home via the shared
+  // event, so the list page owns no refresh chrome of its own.
+  async function onRefresh() {
+    if (progress && progress.phase !== "done") return;
+    try {
+      const result = await api.refreshFeeds();
+      emitEvent("shiyan:refreshed", { result });
+    } catch (e) {
+      emitEvent("shiyan:refreshed", { error: String(e) });
+    }
+  }
+
+  async function onCancelRefresh() {
+    try {
+      await api.cancelRefresh();
+    } catch (e) {
+      toast.err(String(e));
     }
   }
 
@@ -157,6 +223,8 @@ export default function App() {
   });
   const showBar = progress != null && progress.phase !== "done";
   const showDoneBriefly = progress?.phase === "done";
+  /** A refresh is in flight (drives the topbar refresh/cancel buttons). */
+  const refreshing = showBar;
 
   // Sidebar lives in the browse shell only. Home shows the full panel; the
   // Reader collapses it to a glanceable priority rail; utility pages (Vocab /
@@ -180,71 +248,145 @@ export default function App() {
         />
       )}
       <div className="app-col">
-      {hideNav ? (
-        <header className="topbar" onMouseDown={beginWindowDrag}>
-          <nav className="topbar-nav" data-tauri-drag-region>
-            <span className="brand-mini" data-tauri-drag-region>
-              拾言
-            </span>
-            {showPlacementNav && (
-              <NavLink to="/placement" className="topbar-link">
-                词汇测评
-              </NavLink>
-            )}
-          </nav>
-        </header>
-      ) : (
-        <>
-          <header className="topbar" onMouseDown={beginWindowDrag}>
-            <nav className="topbar-nav" data-tauri-drag-region>
-              {isReader && (
+      <header className="topbar" onMouseDown={beginWindowDrag}>
+        <nav className="topbar-nav" data-tauri-drag-region>
+          {!hideNav && isReader && (
+            <button
+              type="button"
+              className="topbar-btn"
+              onClick={() => setRailExpanded((v) => !v)}
+              title={railExpanded ? "收起侧边栏" : "展开侧边栏"}
+              aria-label="切换侧边栏"
+            >
+              <IconSidebar />
+            </button>
+          )}
+          <NavLink
+            to="/"
+            className="brand-mini"
+            data-tauri-drag-region
+            title="回主界面"
+            aria-label="回主界面"
+          >
+            拾言
+          </NavLink>
+          {hideNav && showPlacementNav && (
+            <NavLink to="/placement" className="topbar-link">
+              词汇测评
+            </NavLink>
+          )}
+        </nav>
+        {!hideNav && (
+          <div className="topbar-actions">
+            {/* Contextual cluster: buttons vary by page, globals below never move. */}
+            {isHome && (
+              <>
                 <button
                   type="button"
-                  className="topbar-btn"
-                  onClick={() => setRailExpanded((v) => !v)}
-                  title={railExpanded ? "收起侧边栏" : "展开侧边栏"}
-                  aria-label="切换侧边栏"
+                  className={`topbar-btn${refreshing ? " spin" : ""}`}
+                  onClick={() => void onRefresh()}
+                  disabled={refreshing}
+                  title="刷新订阅"
+                  aria-label="刷新订阅"
                 >
-                  <IconSidebar />
+                  <IconRefresh />
                 </button>
-              )}
-              <span className="brand-mini" data-tauri-drag-region>
-                拾言
-              </span>
-            </nav>
-            <div className="topbar-actions">
-              <button
-                type="button"
-                className="topbar-btn"
-                onClick={() => void onImportFile()}
-                disabled={importingFile}
-                title="导入文件（txt / pdf / docx）"
-                aria-label="导入文件"
-              >
-                <IconImport />
-              </button>
-              <NavLink
-                to="/vocab"
-                className="topbar-btn"
-                title="生词库"
-                aria-label="生词库"
-                onClick={(e) => toggleNav(e, "/vocab")}
-              >
-                <IconVocab />
-              </NavLink>
-              <NavLink
-                to="/settings"
-                className="topbar-btn"
-                title="设置"
-                aria-label="设置"
-                onClick={(e) => toggleNav(e, "/settings")}
-              >
-                <IconSettings />
-              </NavLink>
-            </div>
-          </header>
-        </>
-      )}
+                {refreshing && (
+                  <button
+                    type="button"
+                    className="topbar-btn"
+                    onClick={() => void onCancelRefresh()}
+                    title="取消刷新（已下载的保留）"
+                    aria-label="取消刷新"
+                  >
+                    <IconClose />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={`topbar-btn${filtersOpen ? " active" : ""}`}
+                  onClick={() => setFiltersOpen(!filtersOpen)}
+                  title="筛选"
+                  aria-label="筛选"
+                  aria-expanded={filtersOpen}
+                >
+                  <IconFilter />
+                </button>
+                <div className={`home-search${searchOpen || query ? " open" : ""}`}>
+                  <button
+                    type="button"
+                    className="topbar-btn"
+                    onClick={() => {
+                      if (query) {
+                        setQuery("");
+                      }
+                      setSearchOpen((v) => !v);
+                    }}
+                    title="搜索文章"
+                    aria-label="搜索文章"
+                  >
+                    <IconSearch />
+                  </button>
+                  {searchOpen && (
+                    <input
+                      className="search-input"
+                      type="search"
+                      autoFocus
+                      placeholder="搜索全库标题 / 简介 / 来源 / 标签"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") {
+                          setQuery("");
+                          setSearchOpen(false);
+                        }
+                      }}
+                      onBlur={() => {
+                        if (!query) setSearchOpen(false);
+                      }}
+                    />
+                  )}
+                </div>
+                <span className="topbar-divider" aria-hidden />
+              </>
+            )}
+            <button
+              type="button"
+              className="topbar-btn"
+              onClick={() => void onImportFile()}
+              disabled={importingFile}
+              title="导入文件（txt / pdf / docx）"
+              aria-label="导入文件"
+            >
+              <IconImport />
+            </button>
+            <NavLink
+              to="/vocab"
+              className="topbar-btn"
+              title="生词库"
+              aria-label="生词库"
+            >
+              <IconVocab />
+            </NavLink>
+            <NavLink
+              to="/stats"
+              className="topbar-btn"
+              title="统计"
+              aria-label="统计"
+            >
+              <IconStats />
+            </NavLink>
+            <NavLink
+              to="/settings"
+              className="topbar-btn"
+              title="设置"
+              aria-label="设置"
+            >
+              <IconSettings />
+            </NavLink>
+          </div>
+        )}
+      </header>
       <main className="main">
         {loadError && (
           <div className="banner err with-action" role="status">

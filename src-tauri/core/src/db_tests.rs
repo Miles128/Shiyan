@@ -37,7 +37,7 @@ impl TmpDb {
 
     /// Open the database: create, migrate, seed.
     fn conn(&self) -> rusqlite::Connection {
-        db::open_db(self.file()).expect("open test db")
+        db::open_db(self.file(), true).expect("open test db")
     }
 
     /// Open the read/write connection pair the app uses.
@@ -778,7 +778,7 @@ fn list_article_titles_dedup_window() {
 }
 
 #[test]
-fn query_articles_filters_read_state_source_liked_and_tags() {
+fn query_articles_filters_read_state_source_and_liked() {
     let tmp = TmpDb::new("query");
     let conn = tmp.conn();
 
@@ -788,16 +788,15 @@ fn query_articles_filters_read_state_source_liked_and_tags() {
     read.source = "NPR".into();
     let mut liked = sample_article("liked");
     liked.source = "404 Media".into();
-    let mut tagged = sample_article("tagged");
-    tagged.source = "404 Media".into();
+    let mut other = sample_article("other");
+    other.source = "404 Media".into();
 
-    for a in [&unread, &read, &liked, &tagged] {
+    for a in [&unread, &read, &liked, &other] {
         db::insert_article_if_new(&conn, a).unwrap();
     }
     // "Read" now means finished, not merely opened.
     db::add_article_reading_progress(&conn, "read", 0, true).unwrap();
     db::set_article_liked(&conn, "liked", true).unwrap();
-    db::set_article_tags(&conn, "tagged", &["ai".into(), "chips".into()]).unwrap();
 
     let q = |query: db::ArticleQuery<'_>, limit: i64| {
         db::query_articles(&conn, &query, Some(limit), Some(0))
@@ -844,16 +843,6 @@ fn query_articles_filters_read_state_source_liked_and_tags() {
     );
     assert_eq!(liked_only, vec!["liked".to_string()]);
 
-    let tags = vec!["ai".to_string()];
-    let by_tag = q(
-        db::ArticleQuery {
-            tags: &tags,
-            ..Default::default()
-        },
-        10,
-    );
-    assert_eq!(by_tag, vec!["tagged".to_string()]);
-
     let combined = q(
         db::ArticleQuery {
             source: Some("404 Media"),
@@ -863,6 +852,52 @@ fn query_articles_filters_read_state_source_liked_and_tags() {
         10,
     );
     assert_eq!(combined.len(), 2);
+
+}
+
+#[test]
+fn query_articles_search_matches_title_blurb_source_and_escapes_like() {
+    let tmp = TmpDb::new("search");
+    let conn = tmp.conn();
+
+    let mut fed = sample_article("fed");
+    fed.title = "The Fed holds rates".into();
+    fed.source = "Reuters".into();
+    let mut chip = sample_article("chip");
+    chip.title = "Chip stocks rally".into();
+    chip.summary_zh = "半导体行情".into();
+    chip.source = "404 Media".into();
+    let mut pct = sample_article("pct");
+    pct.title = "100% organic growth".into();
+    pct.source = "Blog".into();
+
+    for a in [&fed, &chip, &pct] {
+        db::insert_article_if_new(&conn, a).unwrap();
+    }
+
+    let q = |search: &str| {
+        db::query_articles(
+            &conn,
+            &db::ArticleQuery {
+                search: Some(search),
+                ..Default::default()
+            },
+            Some(10),
+            Some(0),
+        )
+        .unwrap()
+        .into_iter()
+        .map(|a| a.id)
+        .collect::<Vec<_>>()
+    };
+
+    assert_eq!(q("fed"), vec!["fed".to_string()]);
+    assert_eq!(q("半导体"), vec!["chip".to_string()]);
+    assert_eq!(q("404"), vec!["chip".to_string()]);
+    // LIKE metacharacters are literal: "100%" matches only the pct row.
+    assert_eq!(q("100%"), vec!["pct".to_string()]);
+    // Empty / whitespace-only means no filter.
+    assert_eq!(q("   ").len(), 3);
 
 }
 
@@ -994,6 +1029,32 @@ fn phrase_library_dedup_review_and_listing() {
 }
 
 #[test]
+fn set_memory_status_rejects_unknown_status_and_missing_id() {
+    let tmp = TmpDb::new("memory-status-guard");
+    let conn = tmp.conn();
+    db::insert_memory(&conn, &sample_phrase("s1", "guard term")).unwrap();
+
+    let bad = db::set_memory_status(&conn, "s1", "banana");
+    assert!(bad.is_err(), "unknown status must be rejected");
+    // The rejected write leaves the row untouched (no silent orphan).
+    assert_eq!(
+        db::get_memory(&conn, "s1").unwrap().unwrap().status,
+        "learning"
+    );
+
+    let missing = db::set_memory_status(&conn, "nope", "mastered");
+    assert!(missing.is_err(), "missing id must be rejected");
+
+    // Legit transitions still work both ways.
+    db::set_memory_status(&conn, "s1", "mastered").unwrap();
+    assert_eq!(
+        db::get_memory(&conn, "s1").unwrap().unwrap().status,
+        "mastered"
+    );
+    db::set_memory_status(&conn, "s1", "learning").unwrap();
+}
+
+#[test]
 fn word_and_phrase_libraries_are_independent() {
     let tmp = TmpDb::new("memory-kind");
     let conn = tmp.conn();
@@ -1112,7 +1173,7 @@ fn v10_migration_merges_vocab_and_phrases_into_memory_items() {
     assert_eq!(
         conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        15
+        17
     );
     let words = db::list_memory(&conn, Some("word"), None).unwrap();
     let phrases = db::list_memory(&conn, Some("phrase"), None).unwrap();
@@ -1157,11 +1218,49 @@ fn migration_snapshot_is_written_before_version_bump() {
     std::fs::create_dir_all(&up_to_date).unwrap();
     let current = up_to_date.join("shiyan.db");
     let conn2 = rusqlite::Connection::open(&current).unwrap();
-    conn2.pragma_update(None, "user_version", 15).unwrap();
+    conn2.pragma_update(None, "user_version", 17).unwrap();
     db::backup_before_migration(&conn2, &current);
     assert!(!current
-        .with_file_name("shiyan.db.premigrate-v15.bak")
+        .with_file_name("shiyan.db.premigrate-v17.bak")
         .exists());
+}
+
+#[test]
+fn v17_drops_tags_json_column() {
+    let tmp = TmpDb::new("v17");
+    let conn = tmp.conn();
+    // Fresh DBs migrate straight to v17: the v7 column must be gone.
+    let has: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('articles') WHERE name='tags_json'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(has, 0, "tags_json should be dropped by v17");
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 17);
+}
+
+#[test]
+fn v16_drops_saved_sentences_table() {
+    let tmp = TmpDb::new("v16");
+    let conn = tmp.conn();
+    // Fresh DBs migrate straight to v16: the v15 table must be gone.
+    let has: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='saved_sentences'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(has, 0, "saved_sentences should be dropped by v16");
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 17);
 }
 
 #[test]
@@ -1580,14 +1679,14 @@ fn article_view_loads_paragraphs_and_translations() {
     db::save_translation(&conn, "a1", "paragraph", "0", "First para.", "第一段", "test")
         .unwrap();
 
-    let view = crate::commands::articles::load_article_view(&conn, "a1")
+    let view = crate::article_view::load_article_view(&conn, "a1")
         .unwrap()
         .expect("present");
     assert_eq!(view.article.id, "a1");
     assert_eq!(view.paragraphs, vec!["First para.", "Second para."]);
     assert_eq!(view.translations.len(), 1);
     assert_eq!(view.translations[0].translated_text, "第一段");
-    assert!(crate::commands::articles::load_article_view(&conn, "missing")
+    assert!(crate::article_view::load_article_view(&conn, "missing")
         .unwrap()
         .is_none());
 }
@@ -1615,7 +1714,7 @@ fn schema_adds_summary_zh_column() {
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 15);
+    assert_eq!(version, 17);
     let memory_table: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_items'",
@@ -1639,7 +1738,7 @@ fn schema_adds_summary_zh_column() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(tags_col, 1, "articles.tags_json should exist after migrate");
+    assert_eq!(tags_col, 0, "articles.tags_json should be dropped by v17");
     let quality_col: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM pragma_table_info('articles') WHERE name='quality'",

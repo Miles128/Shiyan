@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useAppConfig, useVocab } from "../store";
 import { api } from "../api";
+import { placementSummaryText } from "../placement/engine";
 import KnownWords from "../components/KnownWords";
 import LookupHistory from "../components/LookupHistory";
 import MemoryLibrary from "../components/MemoryLibrary";
@@ -13,9 +14,7 @@ export default function Vocab() {
   const { refreshLearningTerms } = useVocab();
   const { cfg } = useAppConfig();
   const placementDone = Boolean(cfg.vocab_placement_done);
-  const placementSummary = placementDone
-    ? `${Math.round(cfg.vocab_placement_l ?? cfg.freq_band)} 词`
-    : null;
+  const placementSummary = placementSummaryText(cfg);
   const [library, setLibrary] = useState<Library>("vocab");
   const [exportMsg, setExportMsg] = useState<string | null>(null);
 
@@ -34,9 +33,7 @@ export default function Vocab() {
       <header className="page-header page-header-slim">
         <div>
           <p className="muted">
-            {placementSummary
-              ? `我的词频水平：约 ${placementSummary}`
-              : "生词与短语的学习与复习"}
+            {placementSummary ?? "生词与短语的学习与复习"}
           </p>
         </div>
         <div className="row-actions">
@@ -55,9 +52,9 @@ export default function Vocab() {
         {(
           [
             ["vocab", "生词"],
-            ["phrases", "短语组合"],
+            ["phrases", "短语"],
             ["known", "已认识"],
-            ["lookups", "查词"],
+            ["lookups", "查词历史"],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -78,7 +75,7 @@ export default function Vocab() {
         <MemoryLibrary
           kind="phrase"
           searchPlaceholder="搜索短语 / 释义 / 例句"
-          emptyText="还没有短语。阅读时选中一串词语，点「加入短语组合」即可收藏。"
+          emptyText="还没有短语。阅读时选中一串词语，点「加入短语」即可收藏。"
           onChanged={() => void refreshLearningTerms()}
         />
       ) : (

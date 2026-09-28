@@ -8,7 +8,7 @@
 //! - [`pipeline`] — the parallel refresh flow (`refresh_feeds`)
 //! - [`coverage`] — read-only audit of which sources lose articles, and why
 //! - [`cleanup`] — one-time audits, retention purges, body repair
-//! - [`enrich`] — LLM backfill of summaries and topic tags
+//! - [`enrich`] — LLM backfill of summaries
 //! - [`import`] — import-a-single-article-by-URL path
 //!
 //! All public items are re-exported here so call sites keep using
@@ -30,17 +30,17 @@ pub mod pipeline;
 // The module's outward facade (`crate::feeds::X`): only what is used from
 // outside this module. Sibling submodules reach each other by their own path
 // (`super::filters::x`), so nothing else is re-exported here — that is what
-// used to need a pile of `#[allow(unused_imports)]`.
-pub(crate) use cleanup::{
+// used to need a pile of `#[allow(unused_imports)]`. Items consumed by the
+// command shell live in another crate now, so their re-exports are `pub`.
+pub use cleanup::{
     clear_stale_paragraph_translations_once, purge_blocked_articles, repair_missing_paragraphs,
 };
-pub(crate) use enrich::{
-    fill_article_card_zh, fill_missing_card_zh, fill_missing_tags, CARDS_PER_REFRESH,
-};
+pub(crate) use enrich::fill_article_card_zh;
+pub use enrich::{fill_missing_card_zh, CARDS_PER_REFRESH};
 pub(crate) use filters::{is_english_article, MIN_IMPORTED_BODY_CHARS};
 pub use import::import_article_from_url;
 pub use net::{validate_feed_url, FeedValidation};
-pub use pipeline::{refresh_feeds, RefreshProgress, RefreshResult};
+pub use pipeline::{refresh_feeds, request_refresh_cancel, RefreshProgress, RefreshResult};
 
 /// Reached only from tests (`feeds/tests.rs` via `use super::*`, plus
 /// `db_tests.rs` through `crate::feeds::`).

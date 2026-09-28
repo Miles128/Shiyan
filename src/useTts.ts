@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { claimTtsOwner, getTts, releaseTtsOwner } from "./tts";
+import {
+  claimTtsOwner,
+  getTts,
+  releaseTtsOwner,
+  ttsEngineAvailable,
+} from "./tts";
 
 export type SpeakTarget =
   | { kind: "article" }
@@ -35,9 +40,11 @@ export function useTts() {
 
   const startSpeak = useCallback(
     (target: SpeakTarget, chunks: string[]) => {
+      if (!ttsEngineAvailable()) return false;
       claimTtsOwner(owner);
       setSpeakTarget(target);
       getTts().speakChunks(chunks);
+      return true;
     },
     [owner],
   );

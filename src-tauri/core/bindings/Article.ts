@@ -28,8 +28,4 @@ extraction_source: string,
 /**
  * Accumulated visible reading time in milliseconds.
  */
-dwell_ms: number, read_completed: boolean, liked: boolean, 
-/**
- * Lowercase English topic tags from card translation (semantic profile input).
- */
-tags: Array<string>, };
+dwell_ms: number, read_completed: boolean, liked: boolean, };

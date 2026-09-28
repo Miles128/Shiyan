@@ -2,6 +2,7 @@ import {
   createElement,
   Fragment,
   memo,
+  useMemo,
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
@@ -42,13 +43,18 @@ export const AnnotatedPara = memo(function AnnotatedPara({
   onHardClick?: HardWordClick;
   showGloss?: boolean;
 }): ReactNode {
-  return createElement(
-    Fragment,
-    null,
-    ...annotateText(text, prefs, learningTerms, knownTerms).map((s, i) =>
-      renderSpan(s, i, onHardClick, showGloss),
-    ),
+  // Cache the expensive annotation pass: unrelated parent renders (TTS,
+  // translation toggles) re-render this memo only when props change, and even
+  // then identical text+prefs+vocab hits the memoized spans.
+  const spans = useMemo(
+    () => annotateText(text, prefs, learningTerms, knownTerms),
+    [text, prefs, learningTerms, knownTerms],
   );
+  const rendered = useMemo(
+    () => spans.map((s, i) => renderSpan(s, i, onHardClick, showGloss)),
+    [spans, onHardClick, showGloss],
+  );
+  return createElement(Fragment, null, ...rendered);
 });
 
 function renderSpan(

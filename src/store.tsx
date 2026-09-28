@@ -9,6 +9,7 @@ import {
 } from "react";
 import { api, defaultAppConfig, type AppConfig, type FeedSource } from "./api";
 import { onEvent } from "./events";
+import { invalidateQueries } from "./query";
 import { normalizeReadingPrefs } from "./readingPrefs";
 import { isCefrLevel, isFreqBand, normalizeKey } from "./wordLevels";
 
@@ -121,6 +122,15 @@ type VocabState = {
 
 const VocabContext = createContext<VocabState | null>(null);
 
+type LearningState = Pick<VocabState, "learningTerms" | "refreshLearningTerms">;
+type KnownState = Pick<
+  VocabState,
+  "knownTerms" | "refreshKnownTerms" | "markKnown" | "unmarkKnown"
+>;
+
+const LearningContext = createContext<LearningState | null>(null);
+const KnownContext = createContext<KnownState | null>(null);
+
 export function VocabProvider({ children }: { children: ReactNode }) {
   const [learningTerms, setLearningTerms] = useState<string[]>([]);
   const [knownTerms, setKnownTerms] = useState<string[]>([]);
@@ -174,14 +184,44 @@ export function VocabProvider({ children }: { children: ReactNode }) {
     }),
     [learningTerms, refreshLearningTerms, knownTerms, refreshKnownTerms, markKnown, unmarkKnown],
   );
+  // Split values so learning-only consumers don't re-render on known changes
+  // and vice versa. `VocabContext` stays for existing `useVocab` callers.
+  const learningValue = useMemo(
+    () => ({ learningTerms, refreshLearningTerms }),
+    [learningTerms, refreshLearningTerms],
+  );
+  const knownValue = useMemo(
+    () => ({ knownTerms, refreshKnownTerms, markKnown, unmarkKnown }),
+    [knownTerms, refreshKnownTerms, markKnown, unmarkKnown],
+  );
   return (
-    <VocabContext.Provider value={value}>{children}</VocabContext.Provider>
+    <VocabContext.Provider value={value}>
+      <LearningContext.Provider value={learningValue}>
+        <KnownContext.Provider value={knownValue}>
+          {children}
+        </KnownContext.Provider>
+      </LearningContext.Provider>
+    </VocabContext.Provider>
   );
 }
 
 export function useVocab(): VocabState {
   const ctx = useContext(VocabContext);
   if (!ctx) throw new Error("useVocab must be used within VocabProvider");
+  return ctx;
+}
+
+/** Subscribes only to learning terms — won't re-render on known changes. */
+export function useLearning(): LearningState {
+  const ctx = useContext(LearningContext);
+  if (!ctx) throw new Error("useLearning must be used within VocabProvider");
+  return ctx;
+}
+
+/** Subscribes only to known terms — won't re-render on learning changes. */
+export function useKnown(): KnownState {
+  const ctx = useContext(KnownContext);
+  if (!ctx) throw new Error("useKnown must be used within VocabProvider");
   return ctx;
 }
 
@@ -205,38 +245,38 @@ type ShellState = {
   /** bump after reorder → Home reloads its ranked list. */
   rerankNonce: number;
 
-  /** Tags currently active as a list filter (owned here, edited from the sidebar). */
-  selectedTags: string[];
-  toggleTag: (tag: string) => void;
-  clearTags: () => void;
-  /** Home publishes the tags available in its loaded window for the sidebar chips. */
-  availableTags: string[];
-  publishAvailableTags: (tags: string[]) => void;
-
-  /** Archive filter panel (source/level/read/liked) — toggled from the sidebar. */
+  /** Archive filter panel (source/level/read/liked) — toggled from Home. */
   filtersOpen: boolean;
   setFiltersOpen: (open: boolean) => void;
 
   /** Source currently focused in the main list; null = the 今日推荐 default. */
   focusSource: string | null;
   setFocusSource: (source: string | null) => void;
-
-  /** Distinct sources behind today's picks; the 今日推荐 tree node lists them. */
-  topPickSources: string[];
-  publishTopPickSources: (sources: string[]) => void;
 };
 
 const ShellContext = createContext<ShellState | null>(null);
 
+type FeedsState = Pick<
+  ShellState,
+  "feeds" | "reloadFeeds" | "commitFeedOrder" | "rerankNonce"
+>;
+type FilterState = Pick<
+  ShellState,
+  | "filtersOpen"
+  | "setFiltersOpen"
+  | "focusSource"
+  | "setFocusSource"
+>;
+
+const FeedsContext = createContext<FeedsState | null>(null);
+const FilterContext = createContext<FilterState | null>(null);
+
 export function ShellProvider({ children }: { children: ReactNode }) {
   const [feeds, setFeeds] = useState<FeedSource[]>([]);
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [availableTags, setAvailableTags] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [rerankNonce, setRerankNonce] = useState(0);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [focusSource, setFocusSource] = useState<string | null>(null);
-  const [topPickSources, setTopPickSources] = useState<string[]>([]);
 
   const reloadFeeds = useCallback(async () => {
     try {
@@ -255,8 +295,12 @@ export function ShellProvider({ children }: { children: ReactNode }) {
 
   // Refresh can change the feed list (enable/disable, one-shot cleanups);
   // re-read it so the sidebar stays in sync without a full app reload.
+  // The shell outlives Home across routes, so it also busts the cached
+  // learning stats here: a refresh that finishes while Home is unmounted
+  // would otherwise leave 60s-stale stats on return.
   useEffect(() => {
     return onEvent("shiyan:refreshed", () => {
+      invalidateQueries(["learning-stats"]);
       void reloadFeeds();
     });
   }, [reloadFeeds]);
@@ -291,62 +335,43 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     [reloadFeeds],
   );
 
-  const toggleTag = useCallback((tag: string) => {
-    setSelectedTags((prev) =>
-      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
-    );
-  }, []);
-
-  const clearTags = useCallback(() => setSelectedTags([]), []);
-
-  const publishAvailableTags = useCallback((tags: string[]) => {
-    setAvailableTags((prev) =>
-      prev.length === tags.length && prev.every((t, i) => t === tags[i])
-        ? prev
-        : tags,
-    );
-  }, []);
-
-  const publishTopPickSources = useCallback((sources: string[]) => {
-    setTopPickSources((prev) =>
-      prev.length === sources.length && prev.every((s, i) => s === sources[i])
-        ? prev
-        : sources,
-    );
-  }, []);
-
   const value = useMemo(
     () => ({
       feeds,
       reloadFeeds,
       commitFeedOrder,
       rerankNonce,
-      selectedTags,
-      toggleTag,
-      clearTags,
-      availableTags,
-      publishAvailableTags,
       filtersOpen,
       setFiltersOpen,
       focusSource,
       setFocusSource,
-      topPickSources,
-      publishTopPickSources,
     }),
     [
       feeds,
       reloadFeeds,
       commitFeedOrder,
       rerankNonce,
-      selectedTags,
-      toggleTag,
-      clearTags,
-      availableTags,
-      publishAvailableTags,
       filtersOpen,
       focusSource,
-      topPickSources,
-      publishTopPickSources,
+      setFocusSource,
+    ],
+  );
+
+  const feedsValue = useMemo(
+    () => ({ feeds, reloadFeeds, commitFeedOrder, rerankNonce }),
+    [feeds, reloadFeeds, commitFeedOrder, rerankNonce],
+  );
+  const filterValue = useMemo(
+    () => ({
+      filtersOpen,
+      setFiltersOpen,
+      focusSource,
+      setFocusSource,
+    }),
+    [
+      filtersOpen,
+      focusSource,
+      setFocusSource,
     ],
   );
 
@@ -354,9 +379,13 @@ export function ShellProvider({ children }: { children: ReactNode }) {
 
   return (
     <ShellContext.Provider value={value}>
-      <SearchQueryContext.Provider value={queryValue}>
-        {children}
-      </SearchQueryContext.Provider>
+      <FeedsContext.Provider value={feedsValue}>
+        <FilterContext.Provider value={filterValue}>
+          <SearchQueryContext.Provider value={queryValue}>
+            {children}
+          </SearchQueryContext.Provider>
+        </FilterContext.Provider>
+      </FeedsContext.Provider>
     </ShellContext.Provider>
   );
 }
@@ -364,6 +393,20 @@ export function ShellProvider({ children }: { children: ReactNode }) {
 export function useShell(): ShellState {
   const ctx = useContext(ShellContext);
   if (!ctx) throw new Error("useShell must be used within ShellProvider");
+  return ctx;
+}
+
+/** Subscribes only to feeds/order — won't re-render on tag/filter changes. */
+export function useFeeds(): FeedsState {
+  const ctx = useContext(FeedsContext);
+  if (!ctx) throw new Error("useFeeds must be used within ShellProvider");
+  return ctx;
+}
+
+/** Subscribes only to filters/tags/focus — won't re-render on feeds changes. */
+export function useFilters(): FilterState {
+  const ctx = useContext(FilterContext);
+  if (!ctx) throw new Error("useFilters must be used within ShellProvider");
   return ctx;
 }
 

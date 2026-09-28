@@ -1,17 +1,12 @@
 mod commands;
-mod config;
-mod db;
-mod error;
-mod feeds;
-mod import_file;
-mod rank;
-pub(crate) mod reflow;
-mod srs;
-mod translate;
-mod vocab;
 
-#[cfg(test)]
-mod db_tests;
+// The business layer lives in the `shiyan-core` workspace member and is
+// tauri-free by construction (a `use tauri::` there fails to compile). The
+// re-exports keep `crate::db::…` paths inside the command layer unchanged.
+// `reflow` stays core-internal: only `feeds` and core tests call it.
+use shiyan_core::{
+    article_view, config, db, error, feeds, import_file, rank, srs, translate, vocab,
+};
 
 use tauri::Manager;
 
@@ -74,8 +69,8 @@ pub fn run() {
             commands::feeds::validate_feed,
             commands::feeds::discover_feeds,
             commands::feeds::refresh_feeds,
+            commands::feeds::cancel_refresh,
             commands::articles::fill_missing_card_zh,
-            commands::articles::fill_missing_tags,
             commands::articles::import_article_url,
             commands::articles::import_article_file,
             commands::articles::repair_paragraphs,

@@ -150,7 +150,7 @@ export default function Placement() {
           <div>
             <h1>词汇量测验</h1>
             <p className="muted">
-              约 {PLACEMENT_TOTAL} 题，选英文词的正确中文意思。对了变难、错了变易，测完自动写入阅读难度。
+              约 {PLACEMENT_TOTAL} 题（约 3 分钟），选英文词的正确中文意思。对了变难、错了变易，测完自动写入阅读难度。中途离开需重测。
             </p>
           </div>
           <PageBack />
@@ -223,7 +223,36 @@ export default function Placement() {
             {progress} / {PLACEMENT_TOTAL}
           </p>
         </div>
-        <PageBack />
+        <button
+          type="button"
+          className="icon-btn"
+          onClick={() => {
+            if (
+              window.confirm(
+                `已答 ${n} 题，离开将丢失进度需重测。确定离开？`,
+              )
+            ) {
+              navigate("/");
+            }
+          }}
+          title="返回主界面（将丢失测验进度）"
+          aria-label="返回主界面"
+        >
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            <path d="M19 12H5" />
+            <path d="m12 19-7-7 7-7" />
+          </svg>
+        </button>
       </header>
       {error && <p className="banner err">{error}</p>}
       {question && (

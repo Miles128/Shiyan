@@ -6,7 +6,7 @@ use super::extract::extract_article_page;
 use super::filters::{
     body_defect, is_english_article, looks_like_paywall, MIN_IMPORTED_BODY_CHARS,
 };
-use super::net::HTTP;
+use super::net::{ensure_public_http_url, http_client};
 use crate::db::{self, Article, DbState};
 use crate::error::AppError;
 use chrono::Utc;
@@ -26,21 +26,21 @@ pub fn import_article_from_url(db: &DbState, url: &str) -> Result<Article, AppEr
     if url.is_empty() {
         return Err("请输入文章链接".into());
     }
-    let parsed = url::Url::parse(url).map_err(|_| "链接格式不正确".to_string())?;
-    if parsed.scheme() != "http" && parsed.scheme() != "https" {
-        return Err("仅支持 http/https 链接".into());
-    }
+    // Canonicalize before the existence check so `?utm_*`/fragment variants
+    // hit the same row instead of paying for a full page fetch first.
+    // SSRF is rejected up front (same guard as feed subscription).
+    let url: String = canonical_article_url(url);
+    ensure_public_http_url(&url)?;
 
     {
         let conn = db.lock_read()?;
-        if let Some(existing) = db::get_article_by_url(&conn, url)? {
+        if let Some(existing) = db::get_article_by_url(&conn, &url)? {
             return Ok(existing);
         }
     }
 
-    let url: String = canonical_article_url(url);
-
-    let extracted = extract_article_page(&HTTP, &url)?;
+    let client = http_client()?;
+    let extracted = extract_article_page(&client, &url)?;
     if looks_like_paywall(&extracted.text) {
         return Err("疑似付费墙，已跳过".into());
     }
@@ -73,7 +73,6 @@ pub fn import_article_from_url(db: &DbState, url: &str) -> Result<Article, AppEr
         dwell_ms: 0,
         read_completed: false,
         liked: false,
-        tags: vec![],
     };
 
     {

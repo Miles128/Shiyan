@@ -65,7 +65,10 @@ impl std::io::Write for CappedBody {
 /// being rebuilt per request. Every redirect hop is re-checked by the same
 /// SSRF guard, so a malicious feed cannot bounce the client to localhost,
 /// the LAN, or a cloud metadata endpoint via 30x.
-pub(crate) static HTTP: LazyLock<Client> = LazyLock::new(|| {
+///
+/// Built lazily on first use; a build failure surfaces as an `AppError` at
+/// the call site instead of panicking (which would poison the `LazyLock`).
+pub(crate) static HTTP: LazyLock<Result<Client, String>> = LazyLock::new(|| {
     Client::builder()
         .user_agent(HTTP_USER_AGENT)
         .timeout(std::time::Duration::from_secs(30))
@@ -77,8 +80,14 @@ pub(crate) static HTTP: LazyLock<Client> = LazyLock::new(|| {
             }
         }))
         .build()
-        .expect("build reqwest client")
+        .map_err(|e| e.to_string())
 });
+
+pub(crate) fn http_client() -> Result<Client, AppError> {
+    HTTP.as_ref()
+        .cloned()
+        .map_err(|e| AppError::msg(format!("HTTP 客户端初始化失败：{e}")))
+}
 
 /// True for loopback / private / link-local / CGNAT addresses — the ranges an
 /// SSRF-style request should never reach.
@@ -157,7 +166,18 @@ pub fn validate_feed_url(url: &str) -> FeedValidation {
             }
         }
     };
-    match HTTP.get(url).send().and_then(|r| r.error_for_status()) {
+    let client = match http_client() {
+        Ok(client) => client,
+        Err(e) => {
+            return FeedValidation {
+                ok: false,
+                title: None,
+                entry_count: 0,
+                error: Some(e.to_string()),
+            }
+        }
+    };
+    match client.get(url).send().and_then(|r| r.error_for_status()) {
         Ok(resp) => match read_limited_bytes(resp) {
             Ok(bytes) => match feed_rs::parser::parse(&bytes[..]) {
                 Ok(parsed) => FeedValidation {

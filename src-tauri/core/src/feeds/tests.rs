@@ -82,7 +82,8 @@ fn redirect_to_blocked_host_is_rejected() {
             )
             .expect("write 302");
     });
-    let err = net::HTTP
+    let err = net::http_client()
+        .expect("http client")
         .get(format!("http://127.0.0.1:{port}/feed"))
         .send()
         .expect_err("redirect to a blocked host must be rejected");
@@ -114,7 +115,8 @@ fn oversized_content_length_is_rejected() {
             .expect("write headers");
         // Client must already have errored; the unread body is never sent.
     });
-    let resp = net::HTTP
+    let resp = net::http_client()
+        .expect("http client")
         .get(format!("http://127.0.0.1:{port}/big"))
         .send()
         .expect("headers")
@@ -146,7 +148,8 @@ fn lying_chunked_body_is_cut_off() {
         let _ = stream.write_all(&chunk);
         let _ = stream.write_all(b"\r\n0\r\n\r\n");
     });
-    let resp = net::HTTP
+    let resp = net::http_client()
+        .expect("http client")
         .get(format!("http://127.0.0.1:{port}/endless"))
         .send()
         .expect("headers")
@@ -847,11 +850,12 @@ fn probe_extractor_word_counts() {
     let urls = std::fs::read_to_string(&path).expect("read url list");
     println!("\n抽取正文词数\t整页可见词数\t判定\t链接");
     for url in urls.lines().map(str::trim).filter(|l| !l.is_empty()) {
-        let whole = extract::extract_page(&net::HTTP, url)
+        let client = net::http_client().expect("http client");
+        let whole = extract::extract_page(&client, url)
             .ok()
             .map(|p| p.text);
         let fetched = (|| {
-            let resp = net::HTTP
+            let resp = client
                 .get(url)
                 .send()
                 .ok()?

@@ -4,10 +4,12 @@ import {
   articleDifficulty,
   calibrateEdges,
   difficultyFromScore,
+  difficultyScoreCache,
   type DifficultyLevel,
   type DifficultyPrefs,
 } from "./difficulty";
 import { articleNeedsCardZh } from "./homeDerived";
+import { normalizeKey } from "./wordLevels";
 import type { CefrLevel, FreqBand } from "./wordLevels";
 
 /**
@@ -25,11 +27,7 @@ type BackfillOptions = {
 };
 
 /**
- * Auto-backfill for LLM enrichment: topic tags + one-line Chinese blurbs.
- * Each has its own once-per-mount guard, so a pending tag backfill can never
- * starve the summary backfill (they used to share one flag, and since the tag
- * effect runs first it always won — summaries then never auto-filled while any
- * article lacked tags).
+ * Auto-backfill for LLM enrichment: one-line Chinese blurbs.
  */
 export function useArticleBackfill({
   articles,
@@ -37,14 +35,12 @@ export function useArticleBackfill({
   loading,
   load,
 }: BackfillOptions) {
-  const didTags = useRef(false);
   const didCards = useRef(false);
   const [cardFilling, setCardFilling] = useState(false);
   const [cardFillError, setCardFillError] = useState<string | null>(null);
 
-  // New fetch context (filter/category change) re-arms the guards.
+  // New fetch context (filter/category change) re-arms the guard.
   useEffect(() => {
-    didTags.current = false;
     didCards.current = false;
   }, [load]);
 
@@ -61,22 +57,6 @@ export function useArticleBackfill({
       setCardFilling(false);
     }
   }, [load]);
-
-  // Tags backfill: independent of the card backfill, both may run.
-  useEffect(() => {
-    if (didTags.current) return;
-    if (!hasLlm || loading || articles.length === 0) return;
-    if (!articles.some((a) => a.tags.length === 0)) return;
-    didTags.current = true;
-    void (async () => {
-      try {
-        const n = await api.fillMissingTags(100);
-        if (n > 0) await load();
-      } catch {
-        didTags.current = false;
-      }
-    })();
-  }, [articles, hasLlm, loading, load]);
 
   // Summary backfill — the user-visible one, so it gets its own shot.
   useEffect(() => {
@@ -151,16 +131,47 @@ export function useHomeDifficulty({
     () => ({ cefrLevel, freqBand }),
     [cefrLevel, freqBand],
   );
+  // Hoisted term sets: building them once per input change instead of once
+  // per article (N× allocation + N× normalize). Content-stable via join key.
+  const learningKey = useMemo(
+    () => learningTerms.map(normalizeKey).filter((t) => t.length >= 2).sort().join("\n"),
+    [learningTerms],
+  );
+  const knownKey = useMemo(
+    () => knownTerms.map(normalizeKey).filter((t) => t.length >= 2).sort().join("\n"),
+    [knownTerms],
+  );
+  // Per-article score cache: `loadMore` appends rows, so only genuinely new
+  // (id, excerpt, prefs, vocab) tuples pay for tokenize + dict lookup.
+  // Vocab identity is a short hash (not the raw terms) so cache keys stay small.
+  // The cache is module-shared (difficultyScoreCache), not per mount: the
+  // return-from-Reader pass over the same 60 rows is then all hits instead
+  // of ~25ms of main-thread recompute.
+  const vocabHash = useMemo(() => {
+    const s = `${learningKey}\n${knownKey}`;
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+    return `${cefrLevel}|${freqBand}|${s.length}|${h.toString(36)}`;
+  }, [learningKey, knownKey, cefrLevel, freqBand]);
   return useMemo(() => {
+    const cache = difficultyScoreCache;
     const scored: { id: string; score: number | null }[] = [];
     for (const a of articles) {
+      const ck = `${a.id}\n${vocabHash}`;
+      const hit = cache.get(ck, a.excerpt);
+      if (hit) {
+        scored.push({ id: a.id, score: hit.score });
+        continue;
+      }
       const result = articleDifficulty(
         a.excerpt,
         learningTerms,
         difficultyPrefs,
         knownTerms,
       );
-      scored.push({ id: a.id, score: result?.score ?? null });
+      const score = result?.score ?? null;
+      cache.set(ck, a.excerpt, score);
+      scored.push({ id: a.id, score });
     }
     const edges = calibrateEdges(
       scored.map((s) => s.score).filter((s): s is number => s !== null),
@@ -173,5 +184,7 @@ export function useHomeDifficulty({
       if (level) counts.set(level, (counts.get(level) ?? 0) + 1);
     }
     return { difficultyById: byId, levelCounts: counts };
-  }, [articles, learningTerms, knownTerms, difficultyPrefs]);
+    // vocabHash carries the vocab+prefs identity; raw arrays feed the compute.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [articles, difficultyPrefs, vocabHash]);
 }

@@ -6,13 +6,13 @@ use super::cleanup::{
     purge_rss_below_word_threshold,
 };
 use super::dedup::{canonical_article_url, TitleIndex};
-use super::enrich::{fill_missing_card_zh, fill_missing_tags, CARDS_PER_REFRESH, TAGS_PER_REFRESH};
+use super::enrich::{fill_missing_card_zh, CARDS_PER_REFRESH};
 use super::extract::{fetch_article_page, html_to_text};
 use super::filters::{
     choose_article_body, is_blocked_content, is_english_article, looks_like_paywall,
     looks_truncated, rss_is_full_text, rss_trust_chars,
 };
-use super::net::{ensure_public_http_url, read_limited_bytes, HTTP};
+use super::net::{ensure_public_http_url, http_client, read_limited_bytes};
 use crate::config::AppConfig;
 use crate::db::{self, Article, DbState, FeedSource};
 use crate::error::AppError;
@@ -27,6 +27,30 @@ use uuid::Uuid;
 /// How many feeds download concurrently. Bounded to keep polite to servers
 /// and to preserve per-feed progress ordering in the UI.
 const PARALLEL_FEEDS: usize = 4;
+/// Total enrich (tags + card-zh) budget per refresh. Downloads always run to
+/// completion; when the budget is exhausted the enrich phases are skipped and
+/// noted in `result.errors` so a slow LLM never holds a refresh hostage.
+const ENRICH_BUDGET: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// Cooperative cancel flag for an in-flight refresh. Set by the shell's
+/// `cancel_refresh` command; the download workers and the enrich phases poll
+/// it. Everything committed so far stays (1C: 取消保留已入库).
+static REFRESH_CANCEL: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Signal an in-flight [`refresh_feeds`] to stop after the current unit of
+/// work. Committed articles are kept.
+pub fn request_refresh_cancel() {
+    REFRESH_CANCEL.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn refresh_cancelled() -> bool {
+    REFRESH_CANCEL.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+fn clear_refresh_cancel() {
+    REFRESH_CANCEL.store(false, std::sync::atomic::Ordering::SeqCst);
+}
 /// Articles written per write-lock hold. Releasing the lock between batches
 /// keeps one feed's download from starving readers and other workers.
 const WRITE_BATCH_SIZE: usize = 10;
@@ -83,10 +107,12 @@ type Shared<'a> = std::sync::Mutex<&'a mut RefreshResult>;
 
 /// Record one feed's failure and carry on: a dead or misbehaving source must
 /// not take the other feeds' downloads down with it.
+/// Never panics on a poisoned mutex — a panicking worker must not take the
+/// rest of the refresh down with it (same poison-recover as `DbState`).
 fn note_failure(shared: &Shared<'_>, feed_name: &str, error: impl std::fmt::Display) {
     shared
         .lock()
-        .expect("refresh lock")
+        .unwrap_or_else(|e| e.into_inner())
         .errors
         .push(format!("{feed_name}: {error}"));
 }
@@ -112,7 +138,7 @@ fn persist_articles(
         for article in chunk {
             if title_index
                 .lock()
-                .expect("title index lock")
+                .unwrap_or_else(|e| e.into_inner())
                 .is_dup(&article.title)
             {
                 stats.skipped_duplicate += 1;
@@ -122,13 +148,13 @@ fn persist_articles(
                 Ok(true) => {
                     known_urls
                         .lock()
-                        .expect("known urls lock")
+                        .unwrap_or_else(|e| e.into_inner())
                         .insert(article.url.clone());
                     title_index
                         .lock()
-                        .expect("title index lock")
+                        .unwrap_or_else(|e| e.into_inner())
                         .insert(&article.title);
-                    shared.lock().expect("refresh lock").added_or_updated += 1;
+                    shared.lock().unwrap_or_else(|e| e.into_inner()).added_or_updated += 1;
                 }
                 Ok(false) => stats.skipped_existing += 1,
                 Err(e) => return Err(e),
@@ -151,7 +177,7 @@ fn persist_updates(
     let tx = conn.unchecked_transaction()?;
     for update in updates {
         if db::refresh_article_content(&tx, update)? {
-            shared.lock().expect("refresh lock").updated += 1;
+            shared.lock().unwrap_or_else(|e| e.into_inner()).updated += 1;
         }
     }
     tx.commit()?;
@@ -181,6 +207,8 @@ pub fn refresh_feeds(
     cfg: &AppConfig,
     mut on_progress: impl FnMut(RefreshProgress) + Send + 'static,
 ) -> Result<RefreshResult, AppError> {
+    let started_at = std::time::Instant::now();
+    clear_refresh_cancel();
     let feeds = {
         let conn = db.lock_read()?;
         db::list_feeds(&conn)?
@@ -265,18 +293,22 @@ pub fn refresh_feeds(
     let done_feeds = std::sync::atomic::AtomicUsize::new(0);
     let shared = std::sync::Mutex::new(&mut result);
     let now = Utc::now().to_rfc3339();
+    let http = http_client()?;
 
     std::thread::scope(|scope| {
         let workers = PARALLEL_FEEDS.min(download_total);
         for _ in 0..workers {
             scope.spawn(|| loop {
+                if refresh_cancelled() {
+                    break;
+                }
                 let index = next_index.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 if index >= download_total {
                     break;
                 }
                 let feed = &enabled[index];
                 let done = done_feeds.load(std::sync::atomic::Ordering::SeqCst);
-                let started_articles = shared.lock().expect("refresh lock").added_or_updated;
+                let started_articles = shared.lock().unwrap_or_else(|e| e.into_inner()).added_or_updated;
                 report(
                     "download",
                     done + 1,
@@ -295,7 +327,7 @@ pub fn refresh_feeds(
                 let trust_chars = rss_trust_chars(feed.fulltext_ratio);
                 let outcome =
                     download_feed_articles(
-                        &HTTP,
+                        &http,
                         feed,
                         trust_chars,
                         &known_urls,
@@ -310,7 +342,7 @@ pub fn refresh_feeds(
                 match outcome {
                     Ok(download) => {
                         if download.unchanged {
-                            (shared.lock().expect("refresh lock")).feeds_unchanged += 1;
+                            (shared.lock().unwrap_or_else(|e| e.into_inner())).feeds_unchanged += 1;
                         }
                         let mut stats = download.stats;
                         let insert_ok = match persist_articles(
@@ -341,7 +373,7 @@ pub fn refresh_feeds(
                                 Some(stats.rss_fulltext_hits as f64 / stats.evaluated as f64);
                         }
                         {
-                            let mut result = shared.lock().expect("refresh lock");
+                            let mut result = shared.lock().unwrap_or_else(|e| e.into_inner());
                             result.skipped_existing += stats.skipped_existing + stats.skipped_old;
                             result.skipped_short += stats.skipped_short;
                             result.skipped_non_english += stats.skipped_non_english;
@@ -372,10 +404,10 @@ pub fn refresh_feeds(
                     }
                 }
                 if ok {
-                    (shared.lock().expect("refresh lock")).fetched_feeds += 1;
+                    (shared.lock().unwrap_or_else(|e| e.into_inner())).fetched_feeds += 1;
                 }
                 let done = done_feeds.load(std::sync::atomic::Ordering::SeqCst);
-                let articles_so_far = shared.lock().expect("refresh lock").added_or_updated;
+                let articles_so_far = shared.lock().unwrap_or_else(|e| e.into_inner()).added_or_updated;
                 report(
                     "download",
                     done,
@@ -392,34 +424,20 @@ pub fn refresh_feeds(
     });
     drop(shared);
 
-    let articles_downloaded = result.added_or_updated;
-    report(
-        "translate",
-        0,
-        0,
-        "正在补简介…".into(),
-        download_weight,
-        articles_downloaded,
-    );
-
-    // Tags drive filtering + the interest profile; backfill a bounded batch
-    // per refresh so the whole library catches up over a few runs.
-    match fill_missing_tags(db, cfg, TAGS_PER_REFRESH, |done, total| {
-        if total > 0 {
-            report(
-                "translate",
-                done,
-                total,
-                format!("正在生成主题标签 {done}/{total}"),
-                download_weight,
-                articles_downloaded,
-            );
-        }
-    }) {
-        Ok(_) => {}
-        Err(e) => result.errors.push(format!("主题标签: {e}")),
+    let cancelled = refresh_cancelled();
+    clear_refresh_cancel();
+    if cancelled {
+        result.errors.push("已取消刷新，已保留新增内容".into());
     }
 
+    let articles_downloaded = result.added_or_updated;
+    // Enrich runs only when there is budget left and no cancel: downloads are
+    // the point of a refresh, blurbs catch up over later runs.
+    let enrich_allowed = !cancelled && started_at.elapsed() < ENRICH_BUDGET;
+    if !enrich_allowed && !cancelled {
+        result.errors.push("补简介跳过：刷新耗时超预算，下次自动补".into());
+    }
+    if enrich_allowed {
     match fill_missing_card_zh(db, cfg, CARDS_PER_REFRESH, |done, total| {
         let translate_pct = if total == 0 {
             translate_weight
@@ -442,12 +460,17 @@ pub fn refresh_feeds(
         Ok(n) => result.titles_translated = n,
         Err(e) => result.errors.push(format!("标题/简介: {e}")),
     }
+    }
 
     report(
         "done",
         download_total,
         download_total,
-        format!("刷新完成 · 新增 {} 篇", result.added_or_updated),
+        if cancelled {
+            format!("已取消 · 已保留新增 {} 篇", result.added_or_updated)
+        } else {
+            format!("刷新完成 · 新增 {} 篇", result.added_or_updated)
+        },
         100,
         result.added_or_updated,
     );
@@ -692,6 +715,5 @@ fn fulltext_article(
         dwell_ms: 0,
         read_completed: false,
         liked: false,
-        tags: vec![],
     }
 }

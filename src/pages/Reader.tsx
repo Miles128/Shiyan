@@ -10,6 +10,7 @@ import {
 import { useNavigate, useParams } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
 import { api, type FeedCategory, type TranslateProgress } from "../api";
+import { invalidateQueries } from "../query";
 import {
   readingCssVars,
   resolveReadingPrefs,
@@ -41,6 +42,15 @@ import {
   lookupWord,
   type DifficultyPrefs,
 } from "../wordLevels";
+
+/** Short stable hash for paragraph keys (avoids index-only key reuse). */
+function paraKey(id: string | undefined, index: number, text: string): string {
+  let h = 0;
+  for (let i = 0; i < Math.min(text.length, 64); i++) {
+    h = (h * 31 + text.charCodeAt(i)) | 0;
+  }
+  return `${id ?? "noid"}:${index}:${h.toString(36)}`;
+}
 
 function IconBack() {
   return (
@@ -241,7 +251,13 @@ export default function Reader() {
     if (!atBottomRef.current) return;
     readCompletedRef.current = true;
     setShowDone(true);
-    void api.markArticleProgress(id, 0, true).catch(() => undefined);
+    // Read-state feeds the Home filters: bust the list window so back-nav
+    // paints fresh instead of a stale row that the revalidate then yanks.
+    // (Dwell-only flushes below skip this — churn, and they self-heal.)
+    void api
+      .markArticleProgress(id, 0, true)
+      .then(() => invalidateQueries(["articles"]))
+      .catch(() => undefined);
   }, [id]);
 
   // 读完提示播完即撤；切文章时清掉，避免把上一篇的残影带过来。
@@ -346,7 +362,11 @@ export default function Reader() {
     if (!id) return;
     const next = !(likedOverride ?? article?.liked ?? false);
     setLikedOverride(next);
-    api.setArticleLiked(id, next).catch(() => setLikedOverride(null));
+    // Same story as tryComplete: the ★ flag lives in the cached list rows.
+    api
+      .setArticleLiked(id, next)
+      .then(() => invalidateQueries(["articles"]))
+      .catch(() => setLikedOverride(null));
   }
 
   const asMarkdown = useMemo(() => {
@@ -361,7 +381,9 @@ export default function Reader() {
       return;
     }
     if (paragraphs.length === 0) return;
-    startSpeak({ kind: "article" }, paragraphs);
+    if (!startSpeak({ kind: "article" }, paragraphs)) {
+      wordToast.err("当前环境无语音引擎，无法朗读");
+    }
   }
 
   function speakParagraph(index: number) {
@@ -371,8 +393,49 @@ export default function Reader() {
     }
     const text = paragraphs[index];
     if (!text) return;
-    startSpeak({ kind: "paragraph", index }, [text]);
+    if (!startSpeak({ kind: "paragraph", index }, [text])) {
+      wordToast.err("当前环境无语音引擎，无法朗读");
+    }
   }
+
+  async function translatePara(index: number) {
+    if (!id) return;
+    if (visibleParas[index] && translations[String(index)]) {
+      setVisibleParas((v) => ({ ...v, [index]: false }));
+      return;
+    }
+    if (translations[String(index)]) {
+      setVisibleParas((v) => ({ ...v, [index]: true }));
+      return;
+    }
+    setBusyPara(index);
+    setError(null);
+    try {
+      const row = await api.translateParagraph(id, index, paragraphs[index]);
+      setTranslations((t) => ({ ...t, [String(index)]: row.translated_text }));
+      setVisibleParas((v) => ({ ...v, [index]: true }));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusyPara(null);
+    }
+  }
+
+  // Stable per-paragraph handlers so `ReaderParagraph(memo)` only re-renders
+  // the paragraph whose props actually changed (TTS/translation toggles no
+  // longer invalidate the whole article via inline closures).
+  const handleTranslatePara = useCallback(
+    (index: number) => void translatePara(index),
+    // translatePara reads latest id/paragraphs/translations via closure;
+    // re-created when those change, stable across TTS/speaking renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [id, paragraphs, translations, visibleParas],
+  );
+  const handleSpeakParagraph = useCallback(
+    (index: number) => speakParagraph(index),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [speaking, speakTarget, paragraphs, startSpeak, stopSpeak],
+  );
 
   const onHardWordClick = useCallback(
     function onHardWordClick(info: {
@@ -451,29 +514,6 @@ export default function Reader() {
     }
   }
 
-  async function translatePara(index: number) {
-    if (!id) return;
-    if (visibleParas[index] && translations[String(index)]) {
-      setVisibleParas((v) => ({ ...v, [index]: false }));
-      return;
-    }
-    if (translations[String(index)]) {
-      setVisibleParas((v) => ({ ...v, [index]: true }));
-      return;
-    }
-    setBusyPara(index);
-    setError(null);
-    try {
-      const row = await api.translateParagraph(id, index, paragraphs[index]);
-      setTranslations((t) => ({ ...t, [String(index)]: row.translated_text }));
-      setVisibleParas((v) => ({ ...v, [index]: true }));
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusyPara(null);
-    }
-  }
-
   async function onMouseUp(e: MouseEvent) {
     if (clickGuardRef.current) {
       clickGuardRef.current = false;
@@ -481,8 +521,20 @@ export default function Reader() {
     }
     const sel = window.getSelection();
     const text = sel?.toString().trim() ?? "";
-    if (!text || text.length > 120) {
+    if (!text) {
       setPopover(null);
+      return;
+    }
+    if (text.length > 120) {
+      // 选中整段走段落 gutter 的译按钮；浮窗只做词/短语。
+      setPopover({
+        x: e.clientX,
+        y: e.clientY,
+        text: text.slice(0, 20) + "…",
+        source: text,
+        loading: false,
+        error: "所选超过 120 字，请用段落左侧的 译 按钮翻译整段。",
+      });
       return;
     }
     await showMeaning({ text, x: e.clientX, y: e.clientY });
@@ -512,10 +564,15 @@ export default function Reader() {
     >
 
       {error && <p className="banner err">{error}</p>}
+      {articleSpeaking && (
+        <p className="muted" role="status">
+          正在朗读全文，再次点击标题栏朗读按钮停止。
+        </p>
+      )}
 
       <article className="article-body" onMouseUp={onMouseUp}>
         <div className="reader-title-row">
-            <h1>
+          <h1>
             {lexReady ? (
               <AnnotatedPara
                 text={title}
@@ -528,68 +585,75 @@ export default function Reader() {
               title
             )}
           </h1>
-<div className="page-header-actions">
-        <button
-          className="icon-btn"
-          type="button"
-          onClick={() => navigate("/")}
-          title="返回主界面"
-          aria-label="返回主界面"
-        >
-          <IconBack />
-        </button>
-        <button
-          className="icon-btn"
-          type="button"
-          onClick={toggleLiked}
-          title={liked ? "取消收藏，之后不再优先推荐同类文章" : "收藏，之后优先推荐同类文章"}
-          aria-label={liked ? "取消收藏" : "收藏"}
-          aria-pressed={liked}
-        >
-          {liked ? <IconStarFilled /> : <IconStar />}
-        </button>
-        <button
-          className="icon-btn"
-          type="button"
-          onClick={speakArticle}
-          disabled={paragraphs.length === 0}
-          title={articleSpeaking ? "停止朗读" : "朗读全文"}
-          aria-label={articleSpeaking ? "停止朗读" : "朗读全文"}
-        >
-          {articleSpeaking ? <IconStop /> : <IconVolume />}
-        </button>
-        {busyFull ? (
-          <button className="btn small" type="button" disabled>
-            {translateProgressLabel(fullProgress) ?? "…"}
-          </button>
-        ) : (
-          <button
-            className="icon-btn"
-            type="button"
-            onClick={() => void toggleFullTranslation()}
-            title={showFullZh ? "隐藏译文" : "全文翻译"}
-            aria-label={showFullZh ? "隐藏译文" : "全文翻译"}
-            aria-pressed={showFullZh}
-          >
-            {showFullZh ? <IconEyeOff /> : <IconTranslate />}
-          </button>
-        )}
-        <button
-          ref={typeBtnRef}
-          className={`icon-btn type-toggle${typeOpen ? " active" : ""}`}
-          type="button"
-          onClick={() => setTypeOpen((v) => !v)}
-          title="排版设置"
-          aria-label="排版设置"
-          aria-expanded={typeOpen}
-        >
-          Aa
-        </button>
-        {typeOpen && (
-          <div ref={typePanelRef} className="type-panel-anchor">
-            <ReaderTypePanel />
-          </div>
-        )}
+          <div className="page-header-actions">
+            <button
+              className="icon-btn"
+              type="button"
+              onClick={() => navigate("/")}
+              title="返回主界面"
+              aria-label="返回主界面"
+            >
+              <IconBack />
+            </button>
+            <button
+              className="icon-btn"
+              type="button"
+              onClick={toggleLiked}
+              title={liked ? "取消收藏，之后不再优先推荐同类文章" : "收藏，之后优先推荐同类文章"}
+              aria-label={liked ? "取消收藏" : "收藏"}
+              aria-pressed={liked}
+            >
+              {liked ? <IconStarFilled /> : <IconStar />}
+            </button>
+            <button
+              className="icon-btn"
+              type="button"
+              onClick={speakArticle}
+              disabled={paragraphs.length === 0}
+              title={articleSpeaking ? "停止朗读" : "朗读全文"}
+              aria-label={articleSpeaking ? "停止朗读" : "朗读全文"}
+            >
+              {articleSpeaking ? <IconStop /> : <IconVolume />}
+            </button>
+            {busyFull ? (
+              <button
+                className="icon-btn spin"
+                type="button"
+                disabled
+                aria-busy="true"
+                title={translateProgressLabel(fullProgress) ?? "正在翻译…"}
+                aria-label={translateProgressLabel(fullProgress) ?? "正在翻译"}
+              >
+                <IconTranslate />
+              </button>
+            ) : (
+              <button
+                className="icon-btn"
+                type="button"
+                onClick={() => void toggleFullTranslation()}
+                title={showFullZh ? "隐藏译文" : "全文翻译"}
+                aria-label={showFullZh ? "隐藏译文" : "全文翻译"}
+                aria-pressed={showFullZh}
+              >
+                {showFullZh ? <IconEyeOff /> : <IconTranslate />}
+              </button>
+            )}
+            <button
+              ref={typeBtnRef}
+              className={`icon-btn type-toggle${typeOpen ? " active" : ""}`}
+              type="button"
+              onClick={() => setTypeOpen((v) => !v)}
+              title="排版设置"
+              aria-label="排版设置"
+              aria-expanded={typeOpen}
+            >
+              Aa
+            </button>
+            {typeOpen && (
+              <div ref={typePanelRef} className="type-panel-anchor">
+                <ReaderTypePanel />
+              </div>
+            )}
           </div>
         </div>
         <div className="reader-heading">
@@ -603,8 +667,9 @@ export default function Reader() {
         </div>
         {paragraphs.map((p, i) => (
           <ReaderParagraph
-            key={i}
+            key={paraKey(id, i, p)}
             text={p}
+            paraIndex={i}
             asMarkdown={asMarkdown}
             annotateChildren={annotateChildren}
             zhVisible={!!((showFullZh || visibleParas[i]) && translations[String(i)])}
@@ -614,8 +679,8 @@ export default function Reader() {
             paraSpeaking={
               !!(speaking && speakTarget?.kind === "paragraph" && speakTarget.index === i)
             }
-            onTranslate={() => void translatePara(i)}
-            onSpeak={() => speakParagraph(i)}
+            onTranslate={handleTranslatePara}
+            onSpeak={handleSpeakParagraph}
           />
         ))}
       </article>

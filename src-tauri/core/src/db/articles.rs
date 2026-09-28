@@ -5,7 +5,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 /// Full-row projection. The list projection is derived from this (see
 /// [`query_articles`]) so the column list cannot drift between the two.
 const ARTICLE_COLS: &str =
-    "id,url,title,source,category,published_at,content_text,fetched_at,origin,summary_zh,last_opened_at,open_count,word_count,quality,extraction_source,dwell_ms,read_completed,liked,tags_json";
+    "id,url,title,source,category,published_at,content_text,fetched_at,origin,summary_zh,last_opened_at,open_count,word_count,quality,extraction_source,dwell_ms,read_completed,liked";
 
 /// Home list only needs an excerpt (known% + blurb). Full body stays on get_article.
 pub const LIST_EXCERPT_CHARS: i32 = 6000;
@@ -53,15 +53,28 @@ pub enum ReadState {
 #[derive(Debug, Clone, Default)]
 pub struct ArticleQuery<'a> {
     pub category: Option<&'a str>,
-    /// OR across tags.
-    pub tags: &'a [String],
     /// Exact source (publication) name.
     pub source: Option<&'a str>,
     pub read_state: ReadState,
     pub liked_only: bool,
+    /// Case-insensitive substring match over title / summary_zh / source.
+    /// Empty or whitespace-only means no filter.
+    pub search: Option<&'a str>,
 }
 
-/// Filtered article list. Tags are OR; everything else is AND.
+/// Escape LIKE metacharacters so a user query is always literal.
+fn escape_like_literal(q: &str) -> String {
+    let mut out = String::with_capacity(q.len());
+    for c in q.chars() {
+        if c == '%' || c == '_' || c == '\\' {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Filtered article list. All active filters are AND.
 pub fn query_articles(
     conn: &Connection,
     query: &ArticleQuery<'_>,
@@ -82,20 +95,6 @@ pub fn query_articles(
         clauses.push("category=?".into());
         params.push(rusqlite::types::Value::Text(cat.to_string()));
     }
-    if !query.tags.is_empty() {
-        // json_each() errors on an empty string — articles without tags can
-        // never match a tag filter, so exclude them up front.
-        clauses.push("tags_json <> ''".into());
-        let ors: Vec<String> = query
-            .tags
-            .iter()
-            .map(|_| "EXISTS (SELECT 1 FROM json_each(tags_json) WHERE value=?)".to_string())
-            .collect();
-        clauses.push(format!("({})", ors.join(" OR ")));
-        for tag in query.tags {
-            params.push(rusqlite::types::Value::Text(tag.clone()));
-        }
-    }
     if let Some(source) = query.source.filter(|s| !s.is_empty()) {
         clauses.push("source=?".into());
         params.push(rusqlite::types::Value::Text(source.to_string()));
@@ -113,6 +112,15 @@ pub fn query_articles(
     }
     if query.liked_only {
         clauses.push("liked=1".into());
+    }
+    if let Some(q) = query.search.map(str::trim).filter(|q| !q.is_empty()) {
+        clauses.push(
+            "(title LIKE ? ESCAPE '\\' OR summary_zh LIKE ? ESCAPE '\\' OR source LIKE ? ESCAPE '\\')".into(),
+        );
+        let pattern = format!("%{}%", escape_like_literal(q));
+        for _ in 0..3 {
+            params.push(rusqlite::types::Value::Text(pattern.clone()));
+        }
     }
     if !clauses.is_empty() {
         sql.push_str(" WHERE ");
@@ -154,7 +162,6 @@ pub fn map_article_list_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<Articl
         dwell_ms: row.get("dwell_ms")?,
         read_completed: row.get::<_, i64>("read_completed")? != 0,
         liked: row.get::<_, i64>("liked")? != 0,
-        tags: parse_tags_json(&row.get::<_, String>("tags_json")?),
     })
 }
 
@@ -178,7 +185,6 @@ pub fn map_article(row: &rusqlite::Row<'_>) -> rusqlite::Result<Article> {
         dwell_ms: row.get("dwell_ms")?,
         read_completed: row.get::<_, i64>("read_completed")? != 0,
         liked: row.get::<_, i64>("liked")? != 0,
-        tags: parse_tags_json(&row.get::<_, String>("tags_json")?),
     })
 }
 
@@ -535,7 +541,6 @@ pub fn insert_article_if_new(conn: &Connection, a: &Article) -> Result<bool, App
 /// (the RSS refresh path does exactly that).
 /// Keeps id / url / title / source / category / published_at / origin intact.
 /// Clears `summary_zh` so the refresh pipeline regenerates it for the new body.
-/// Also clears `tags_json` so stale tags (describing the old body) are replaced.
 pub fn refresh_article_content(conn: &Connection, a: &Article) -> Result<bool, AppError> {
     let changed = conn
         .execute(
@@ -557,11 +562,6 @@ pub fn refresh_article_content(conn: &Connection, a: &Article) -> Result<bool, A
             .optional()?;
         if let Some(id) = id {
             super::delete_paragraph_translations(conn, &id)?;
-            // Tags describe the old body; clear so `fill_missing_tags` refills.
-            conn.execute(
-                "UPDATE articles SET tags_json='' WHERE id=?1",
-                params![id],
-            )?;
         }
     }
     Ok(changed > 0)
@@ -581,22 +581,6 @@ pub fn list_unassessed_rss_articles(conn: &Connection) -> Result<Vec<Article>, A
         .collect::<Result<Vec<_>, _>>()
         ?;
     Ok(rows)
-}
-
-/// Store topic tags (lowercase English) produced by card translation.
-/// Empty string = no tags yet; overwritten wholesale on refresh.
-pub fn set_article_tags(conn: &Connection, id: &str, tags: &[String]) -> Result<(), AppError> {
-    let json = if tags.is_empty() {
-        String::new()
-    } else {
-        serde_json::to_string(tags)?
-    };
-    conn.execute(
-        "UPDATE articles SET tags_json=?1 WHERE id=?2",
-        params![json, id],
-    )
-    ?;
-    Ok(())
 }
 
 /// Stamp the body-quality verdict on an article (once; never re-derived later).
@@ -755,15 +739,7 @@ pub fn set_meta(conn: &Connection, key: &str, value: &str) -> Result<(), AppErro
     Ok(())
 }
 
-/// Parse the stored tags JSON; malformed/empty → no tags.
-pub fn parse_tags_json(raw: &str) -> Vec<String> {
-    if raw.trim().is_empty() {
-        return vec![];
-    }
-    serde_json::from_str::<Vec<String>>(raw).unwrap_or_default()
-}
-
-/// Articles that still lack topic tags (for the one-time / rolling backfill).
+/// Articles that still lack a Chinese card (for the rolling backfill).
 /// Newest-first batch of full rows matching a fixed predicate. `where_clause`
 /// is only ever a literal from this file — nothing caller-supplied reaches it.
 fn recent_articles_where(
@@ -781,64 +757,6 @@ fn recent_articles_where(
         .query_map(params![limit as i64], map_article)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
-}
-
-pub fn articles_missing_tags(conn: &Connection, limit: usize) -> Result<Vec<Article>, AppError> {
-    recent_articles_where(
-        conn,
-        "IFNULL(tags_json,'') = '' AND quality='fulltext'",
-        limit,
-    )
-}
-
-/// Interest profile inputs for tag-based ranking:
-/// - `user_weights`: tag → engagement weight (liked 2.0, read-to-end 1.0)
-/// - `doc_counts`: tag → number of articles carrying it
-/// - `docs`: number of tagged articles (IDF denominator)
-pub fn tag_profile(
-    conn: &Connection,
-) -> Result<
-    (
-        std::collections::HashMap<String, f64>,
-        std::collections::HashMap<String, i64>,
-        i64,
-    ),
-    AppError,
-> {
-    let mut stmt = conn
-        .prepare("SELECT tags_json, liked, read_completed FROM articles")
-        ?;
-    let mut rows = stmt.query([])?;
-
-    let mut user_weights: std::collections::HashMap<String, f64> =
-        std::collections::HashMap::new();
-    let mut doc_counts: std::collections::HashMap<String, i64> =
-        std::collections::HashMap::new();
-    let mut docs = 0i64;
-
-    while let Some(row) = rows.next()? {
-        let tags = parse_tags_json(&row.get::<_, String>(0)?);
-        if tags.is_empty() {
-            continue;
-        }
-        docs += 1;
-        let liked: i64 = row.get(1)?;
-        let completed: i64 = row.get(2)?;
-        let weight = if liked != 0 {
-            2.0
-        } else if completed != 0 {
-            1.0
-        } else {
-            0.0
-        };
-        for tag in tags {
-            *doc_counts.entry(tag.clone()).or_insert(0) += 1;
-            if weight > 0.0 {
-                *user_weights.entry(tag).or_insert(0.0) += weight;
-            }
-        }
-    }
-    Ok((user_weights, doc_counts, docs))
 }
 
 /// All-time open counts grouped by source and by category — the affinity
@@ -863,6 +781,31 @@ pub fn affinity_open_counts(
         "SELECT category, SUM(open_count) FROM articles WHERE open_count > 0 GROUP BY category",
     )?;
     Ok((by_source, by_category))
+}
+
+/// Titles the learner explicitly engaged with, for the local semantic
+/// profile: (title, weight) with liked = 2.0, read-to-end = 1.0.
+pub fn engaged_titles(conn: &Connection) -> Result<Vec<(String, f64)>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT title, liked, read_completed FROM articles
+          WHERE liked = 1 OR read_completed = 1",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            let title: String = row.get(0)?;
+            let liked: i64 = row.get(1)?;
+            let completed: i64 = row.get(2)?;
+            let weight = if liked != 0 {
+                2.0
+            } else if completed != 0 {
+                1.0
+            } else {
+                0.0
+            };
+            Ok((title, weight))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows.into_iter().filter(|(_, w)| *w > 0.0).collect())
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 import type { ArticleListItem } from "./api/types";
 import type { DifficultyLevel } from "./difficulty";
 
-// Home 列表的全部派生逻辑：摘要/长度标签、标签栏、
+// Home 列表的全部派生逻辑：摘要/长度标签、
 // 今日推荐、难度加权排序。保持纯函数，供 Home / ArticleRow 消费。
 
 /** Titles stay English now — only the Chinese synopsis is generated. */
@@ -26,20 +26,6 @@ export function articleLengthLabel(wordCount: number): string {
   if (wordCount < 1800) return "长";
   if (wordCount < 3000) return "很长";
   return "极长";
-}
-
-/** Tag chips shown in the filter row: most frequent first, capped. */
-export function topTags(articles: ArticleListItem[], max: number = 12): string[] {
-  const counts = new Map<string, number>();
-  for (const a of articles) {
-    for (const tag of a.tags ?? []) {
-      counts.set(tag, (counts.get(tag) ?? 0) + 1);
-    }
-  }
-  return [...counts.entries()]
-    .sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]))
-    .slice(0, max)
-    .map(([tag]) => tag);
 }
 
 /** Max picks per category, so one busy section can't fill the whole row. */
@@ -118,4 +104,36 @@ export function applyDifficultyOrder(
     }))
     .sort((x, y) => y.score - x.score)
     .map((row) => row.a);
+}
+
+/** Server-query inputs that define the Home page-0 window. Difficulty level
+ *  is deliberately absent: it refines client-side (matchesLevel), so it must
+ *  not split the key space. Constants (limit, unreadOnly) are omitted too. */
+export type HomeListKeyInput = {
+  showPicks: boolean;
+  focusSource: string | null;
+  read: string;
+  likedOnly: boolean;
+  search: string | undefined;
+};
+
+/**
+ * Query-cache key segments for the page-0 window. Single definition shared
+ * by the Home memo and the state lazy-initializer: two spellings of the same
+ * key would silently halve the hit rate (peek misses on every remount).
+ */
+export function homeListKey(input: HomeListKeyInput): readonly unknown[] {
+  if (input.showPicks) {
+    return ["articles", "ranked", { search: input.search ?? null }];
+  }
+  return [
+    "articles",
+    "library",
+    {
+      source: input.focusSource ?? null,
+      read: input.read,
+      likedOnly: input.likedOnly,
+      search: input.search ?? null,
+    },
+  ];
 }

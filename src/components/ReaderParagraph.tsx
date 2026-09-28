@@ -18,6 +18,7 @@ export function shouldAnnotateMarkdownTag(tag: string): boolean {
 
 type Props = {
   text: string;
+  paraIndex: number;
   asMarkdown: boolean;
   annotateChildren: (children: ReactNode) => ReactNode;
   zhVisible: boolean;
@@ -25,12 +26,13 @@ type Props = {
   translating: boolean;
   visiblePara: boolean;
   paraSpeaking: boolean;
-  onTranslate: () => void;
-  onSpeak: () => void;
+  onTranslate: (index: number) => void;
+  onSpeak: (index: number) => void;
 };
 
 export default memo(function ReaderParagraph({
   text,
+  paraIndex,
   asMarkdown,
   annotateChildren,
   zhVisible,
@@ -48,7 +50,7 @@ export default memo(function ReaderParagraph({
           className="para-btn"
           type="button"
           title="翻译本段"
-          onClick={onTranslate}
+          onClick={() => onTranslate(paraIndex)}
           disabled={translating}
         >
           {translating ? "…" : visiblePara ? "隐" : "译"}
@@ -57,7 +59,7 @@ export default memo(function ReaderParagraph({
           className={`para-btn${paraSpeaking ? " active" : ""}`}
           type="button"
           title={paraSpeaking ? "停止朗读" : "朗读本段"}
-          onClick={onSpeak}
+          onClick={() => onSpeak(paraIndex)}
         >
           {paraSpeaking ? "停" : "读"}
         </button>

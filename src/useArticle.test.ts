@@ -7,7 +7,6 @@ import {
   rememberLastArticle,
   resetLastArticleMemory,
   saveScroll,
-  shouldApplyLoad,
   translationsMap,
 } from "./useArticle";
 
@@ -42,13 +41,6 @@ describe("articleViewState", () => {
         error: "翻译失败",
       }),
     ).toBe("ready");
-  });
-});
-
-describe("shouldApplyLoad", () => {
-  it("drops stale responses when a newer request started", () => {
-    expect(shouldApplyLoad(1, 2)).toBe(false);
-    expect(shouldApplyLoad(2, 2)).toBe(true);
   });
 });
 

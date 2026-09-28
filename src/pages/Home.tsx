@@ -2,10 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, ArticleListItem, LearningStats } from "../api";
 import {
+  fetchQuery,
+  invalidateQueries,
+  peekQuery,
+} from "../query";
+import {
   applyDifficultyOrder,
   articleNeedsCardZh,
+  homeListKey,
   pickTopArticles,
-  topTags,
 } from "../homeDerived";
 import { useArticleBackfill, useHomeDifficulty, useInfiniteScroll } from "../homeHooks";
 import { formatLearningInsight } from "../learningStats";
@@ -35,24 +40,6 @@ import {
 import { useTts } from "../useTts";
 import { useWordPopover } from "../useWordPopover";
 
-function IconRefresh() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-      <path d="M21 3v6h-6" />
-    </svg>
-  );
-}
-
-function IconSearch() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <circle cx="11" cy="11" r="7" />
-      <path d="m21 21-4.3-4.3" />
-    </svg>
-  );
-}
-
 const PAGE_SIZE = 60;
 /** 今日推荐: the first N ranked unread articles, shown expanded. */
 const TOP_PICKS = 10;
@@ -76,36 +63,37 @@ const DEFAULT_FILTERS: Filters = {
 };
 
 export default function Home() {
-  const [articles, setArticles] = useState<ArticleListItem[]>([]);
-  const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  /** Top-bar search input is collapsed until the button is pressed or text is present. */
-  const [searchOpen, setSearchOpen] = useState(false);
   const navigate = useNavigate();
   const { cfg } = useAppConfig();
   const {
-    selectedTags,
-    publishAvailableTags,
     rerankNonce,
     filtersOpen,
     focusSource,
     setFocusSource,
-    publishTopPickSources,
   } = useShell();
   const { query, setQuery } = useSearchQuery();
+  // Debounced server-side search: the backend filters title/blurb/source so
+  // searching reaches past the loaded window. 300ms keeps keystrokes smooth.
+  const [debouncedQuery, setDebouncedQuery] = useState(query);
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedQuery(query), 300);
+    return () => window.clearTimeout(t);
+  }, [query]);
+  const serverSearch = debouncedQuery.trim() ? debouncedQuery.trim() : undefined;
   /** Archive filters (merged in from the old Library page). */
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const patchFilters = useCallback(
     (patch: Partial<Filters>) => setFilters((f) => ({ ...f, ...patch })),
     [],
   );
-  const clearFilters = useCallback(() => {
-    // Panel collapse resets the archive filters only; tag selection lives in the
-    // sidebar and is cleared by its own 清除 control.
+  /** True reset for the filtered-empty state: panel + source + search. */
+  const resetAllFilters = useCallback(() => {
     setFilters(DEFAULT_FILTERS);
-  }, []);
+    setFocusSource(null);
+    setQuery("");
+  }, [setFocusSource, setQuery]);
   const toast = useToast();
   const [learningStats, setLearningStats] = useState<LearningStats | null>(null);
 
@@ -126,35 +114,61 @@ export default function Home() {
   /** Main-list model (single focused list, never a multi-source page):
    *  - 今日推荐 (default): no source focused and no other filter active.
    *  - source view: a sidebar source is focused → that source's articles.
-   *  - archive view: some refinement (status/收藏/难度/标签) active with no
+   *  - archive view: some refinement (status/收藏/难度) active with no
    *    focused source → a flat filtered list. */
   const hasOtherFilter =
     filters.read !== "unfinished" ||
     filters.likedOnly ||
     filters.level !== "all" ||
-    selectedTags.length > 0;
+    serverSearch != null;
   const showPicks = focusSource === null && !hasOtherFilter;
 
   const fetchPage = useCallback(
     (offset: number, cursor?: { score: number; id: string } | null) =>
       showPicks
         ? api.listArticlesRanked({
-            tags: [],
             unreadOnly: true,
             limit: PAGE_SIZE,
             offset,
             cursor: cursor ?? null,
+            search: serverSearch,
           })
         : api.listLibrary({
             category: undefined,
-            tags: selectedTags,
             source: focusSource ?? undefined,
             readState: filters.read,
             likedOnly: filters.likedOnly,
             limit: PAGE_SIZE,
             offset,
+            search: serverSearch,
           }),
-    [showPicks, selectedTags, focusSource, filters],
+    [showPicks, focusSource, filters, serverSearch],
+  );
+
+  // Cache key for the page-0 window (pagination appends stay local state —
+  // only the base window is shared). Single definition in homeDerived: the
+  // state initializer below must spell it identically or peeks miss.
+  const listKey = useMemo(
+    () =>
+      homeListKey({
+        showPicks,
+        focusSource,
+        read: filters.read,
+        likedOnly: filters.likedOnly,
+        search: serverSearch,
+      }),
+    [showPicks, focusSource, filters, serverSearch],
+  );
+
+  // First paint comes from the cache when present: returning from an article
+  // renders rows immediately instead of flashing the empty state, and the
+  // fresh fetch in load() replaces them. Lazy initializer re-runs per
+  // mount, so every return re-peeks.
+  const [articles, setArticles] = useState<ArticleListItem[]>(
+    () => peekQuery<ArticleListItem[]>(listKey) ?? [],
+  );
+  const [hasMore, setHasMore] = useState(
+    () => (peekQuery<ArticleListItem[]>(listKey)?.length ?? 0) >= PAGE_SIZE,
   );
 
   // Stale-response guard: rapid filter/source changes fire overlapping loads;
@@ -162,11 +176,27 @@ export default function Home() {
   const loadSeq = useRef(0);
   const load = useCallback(async () => {
     const seq = ++loadSeq.current;
-    setLoading(true);
+    // Stale-while-revalidate: remounts (Reader → Home) paint the cached
+    // window instantly instead of flashing 加载中…; the fresh fetch below
+    // always runs and replaces it. Filter changes miss the cache (new key)
+    // and keep today's loading flash.
+    const snap = peekQuery<ArticleListItem[]>(listKey);
+    if (snap) {
+      setArticles(snap);
+      setHasMore(snap.length >= PAGE_SIZE);
+    } else {
+      setLoading(true);
+    }
     try {
       const [list, stats] = await Promise.all([
-        fetchPage(0),
-        api.getLearningStats().catch(() => null),
+        fetchQuery<ArticleListItem[]>(listKey, () => fetchPage(0)),
+        // Stats move slowly; a minute of freshness skips a refetch on every
+        // filter change. Refresh events invalidate (see below).
+        fetchQuery<LearningStats | null>(
+          ["learning-stats"],
+          () => api.getLearningStats().catch(() => null),
+          { staleTime: 60_000 },
+        ),
         ensureLexiconLoaded().catch(() => undefined),
       ]);
       if (seq !== loadSeq.current) return;
@@ -178,7 +208,7 @@ export default function Home() {
     } finally {
       if (seq === loadSeq.current) setLoading(false);
     }
-  }, [fetchPage, toast]);
+  }, [fetchPage, listKey, toast]);
 
   useEffect(() => {
     void load();
@@ -205,9 +235,16 @@ export default function Home() {
   });
 
   const loadMoreRef = useRef(false);
+  // Latest list key, synced every render (effect, never during render):
+  // a page fetched under the old filter must not append into the new list.
+  const listKeyRef = useRef(listKey);
+  useEffect(() => {
+    listKeyRef.current = listKey;
+  });
   async function loadMore() {
     if (loadMoreRef.current) return;
     loadMoreRef.current = true;
+    const keyAtStart = listKeyRef.current;
     setLoadingMore(true);
     try {
       // Cursor pagination for the ranked 今日推荐 feed: immune to inserts above
@@ -217,6 +254,10 @@ export default function Home() {
         articles.length,
         showPicks && last ? { score: last.rank_score, id: last.id } : null,
       );
+      // Filter/source changed mid-flight: drop the stale page instead of
+      // mixing rows from two queries. (load() has the same guard via loadSeq;
+      // loadMore appends, so it needs the key check instead.)
+      if (listKeyRef.current !== keyAtStart) return;
       setArticles((prev) => {
         const seen = new Set(prev.map((a) => a.id));
         return prev.concat(next.filter((a) => !seen.has(a.id)));
@@ -230,23 +271,7 @@ export default function Home() {
     }
   }
 
-  // Refresh lives on the list it refreshes: signal Home via the shared event.
-  async function onRefresh() {
-    if (refreshing) return;
-    setRefreshing(true);
-    try {
-      const result = await api.refreshFeeds();
-      emitEvent("shiyan:refreshed", { result });
-    } catch (e) {
-      emitEvent("shiyan:refreshed", { error: String(e) });
-    } finally {
-      setRefreshing(false);
-    }
-  }
-
-  // Tag chips come from the loaded window; keeping the filter row stable
-  // while filtered results are shown requires remembering them.
-  const availableTags = useMemo(() => topTags(articles), [articles]);
+  // Refresh runs from the topbar; Home reloads on the shared event below.
 
   /** True when any loaded row still lacks a Chinese blurb (drives the hint). */
   const needsCardZh = useMemo(
@@ -254,14 +279,9 @@ export default function Home() {
     [articles],
   );
 
-  // The always-visible tag filter now lives in the sidebar: publish the tags
-  // available in this window so its chips match what Home could filter on.
-  useEffect(() => {
-    publishAvailableTags(availableTags);
-  }, [availableTags, publishAvailableTags]);
-
-  // Top-bar search: a lightweight client-side filter over the loaded window
-  // (title / blurb / source / tags). No backend full-text command exists yet.
+  // Client-side refinement over the server-filtered page (title / blurb /
+  // source). The backend `search` already scopes to the whole library;
+  // this only guards against stale rows while the debounced query is in flight.
   const matchesQuery = useCallback(
     (a: ArticleListItem) => {
       const q = query.trim().toLowerCase();
@@ -269,8 +289,7 @@ export default function Home() {
       return (
         a.title.toLowerCase().includes(q) ||
         a.summary_zh.toLowerCase().includes(q) ||
-        a.source.toLowerCase().includes(q) ||
-        (a.tags ?? []).some((t) => t.toLowerCase().includes(q))
+        a.source.toLowerCase().includes(q)
       );
     },
     [query],
@@ -308,41 +327,30 @@ export default function Home() {
     [orderedArticles],
   );
 
-  // Publish the distinct sources behind today's picks so the sidebar's
-  // 今日推荐 node can expand to show them (glance only, not draggable).
-  useEffect(() => {
-    const seen = new Set<string>();
-    const srcs: string[] = [];
-    for (const a of topPicks) {
-      if (!seen.has(a.source)) {
-        seen.add(a.source);
-        srcs.push(a.source);
-      }
-    }
-    publishTopPickSources(srcs);
-  }, [topPicks, publishTopPickSources]);
+  // Collapsing the filter panel only folds it; values are kept until the
+  // explicit 清除筛选 button (which resets everything, see resetAllFilters).
 
-  // Collapsing the filter panel (from the sidebar icon) resets archive filters.
-  const filtersOpenPrev = useRef(filtersOpen);
-  useEffect(() => {
-    if (filtersOpenPrev.current && !filtersOpen) clearFilters();
-    filtersOpenPrev.current = filtersOpen;
-  }, [filtersOpen, clearFilters]);
-
-  /** The one list the main area shows: 今日推荐, or the focused/filtered set. */
+  /** Two modes only: 今日推荐 (default) vs 全部文章 (any source/filter/search
+   *  active — a focused source is just one filter among others). */
   const displayList = showPicks ? topPicks : visible;
-  const listHeading = showPicks
-    ? "今日推荐"
-    : focusSource ?? "筛选结果";
+  const listHeading = showPicks ? "今日推荐" : "全部文章";
 
   // The top bar drives refresh + feed management; Home only reacts.
+  // Refresh failures also persist as a banner (same style as card-fill errors)
+  // so the cause survives the toast.
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   useEffect(() => {
     return onEvent("shiyan:refreshed", (detail) => {
       const result = detail.result;
       if (detail.error || !result) {
-        toast.err(detail.error ?? "刷新失败");
+        setRefreshError(detail.error ?? "刷新失败");
         return;
       }
+      setRefreshError(null);
+      // Stats are cached for a minute — a refresh moves them, so bust.
+      // (The article window always revalidates on load; its peek is only
+      // an instant stale paint, replaced by the fresh fetch in load().)
+      invalidateQueries(["learning-stats"]);
       toast.ok(
         `新增 ${result.added_or_updated}` +
           (result.skipped_existing ? ` · 已有 ${result.skipped_existing}` : "") +
@@ -459,139 +467,101 @@ export default function Home() {
 
   return (
     <div className="page home-page" onMouseUp={(e) => void onPageMouseUp(e)}>
-      <div className="home-toolbar">
-        <button
-          type="button"
-          className={`iconlike${refreshing ? " spin" : ""}`}
-          onClick={() => void onRefresh()}
-          disabled={refreshing}
-          title="刷新订阅"
-          aria-label="刷新订阅"
-        >
-          <IconRefresh />
-        </button>
-        <div className={`home-search${searchOpen || query ? " open" : ""}`}>
-          <button
-            type="button"
-            className="iconlike"
-            onClick={() => {
-              if (query) {
-                setQuery("");
-              }
-              setSearchOpen((v) => !v);
-            }}
-            title="搜索文章"
-            aria-label="搜索文章"
-          >
-            <IconSearch />
-          </button>
-          {searchOpen && (
-            <input
-              className="search-input"
-              type="search"
-              autoFocus
-              placeholder="搜索标题 / 简介 / 来源 / 标签"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") {
-                  setQuery("");
-                  setSearchOpen(false);
-                }
-              }}
-              onBlur={() => {
-                if (!query) setSearchOpen(false);
-              }}
-            />
-          )}
-        </div>
-        <div className="tabs-right">
-          {learningStats && (
-            <span className="learning-insight-inline">
-              {formatLearningInsight(learningStats)} ·{" "}
-              <Link to="/stats">统计</Link>
-            </span>
-          )}
-          {resumePath && (
-            <button
-              type="button"
-              className="linklike"
-              onClick={() => navigate(resumePath)}
-            >
-              继续阅读
-            </button>
-          )}
-        </div>
-      </div>
-
       {filtersOpen && (
-        <>
-          <div className="library-filters">
-            <div className="filter-row">
-              <div className="filter-group">
-                {(
-                  [
-                    ["unfinished", "未完成"],
-                    ["unread", "未读"],
-                    ["read", "已读"],
-                    ["all", "全部"],
-                  ] as const
-                ).map(([id, label]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    className={filters.read === id ? "tag-chip active" : "tag-chip"}
-                    onClick={() => patchFilters({ read: id })}
-                  >
-                    {label}
-                  </button>
-                ))}
+        <div className="library-filters">
+          <div className="filter-row">
+            <div className="filter-group">
+              {(
+                [
+                  ["unfinished", "未完成"],
+                  ["unread", "未读"],
+                  ["read", "已读"],
+                  ["all", "全部"],
+                ] as const
+              ).map(([id, label]) => (
                 <button
+                  key={id}
                   type="button"
-                  className={filters.likedOnly ? "tag-chip active" : "tag-chip"}
-                  onClick={() =>
-                    setFilters((f) => ({ ...f, likedOnly: !f.likedOnly }))
-                  }
+                  className={filters.read === id ? "tag-chip active" : "tag-chip"}
+                  onClick={() => patchFilters({ read: id })}
                 >
-                  ★ 收藏
+                  {label}
                 </button>
-              </div>
-              {hasOtherFilter && (
-                <button
-                  type="button"
-                  className="tag-chip clear filter-clear"
-                  onClick={clearFilters}
-                >
-                  清除筛选
-                </button>
-              )}
-            </div>
-
-            <div className="filter-row">
-              <select
-                className="filter-select"
-                value={filters.level}
-                onChange={(e) =>
-                  patchFilters({ level: e.target.value as DifficultyLevel | "all" })
+              ))}
+              <button
+                type="button"
+                className={filters.likedOnly ? "tag-chip active" : "tag-chip"}
+                onClick={() =>
+                  // Opening the ★ shelf switches read to 全部: liked
+                  // articles you already finished (read_completed = 1) are
+                  // excluded by the default 未完成 filter, which reads as
+                  // "收藏丢失". Closing ★ keeps the current read filter.
+                  setFilters((f) =>
+                    f.likedOnly
+                      ? { ...f, likedOnly: false }
+                      : { ...f, likedOnly: true, read: "all" },
+                  )
                 }
               >
-                <option value="all">全部难度</option>
-                {DIFFICULTY_LEVELS.map((level) => (
-                  <option key={level} value={level}>
-                    {difficultyLabel(level)}
-                    {levelCounts.get(level) ? ` (${levelCounts.get(level)})` : ""}
-                  </option>
-                ))}
-              </select>
+                ★ 收藏
+              </button>
             </div>
+            {hasOtherFilter && (
+              <button
+                type="button"
+                className="tag-chip clear filter-clear"
+                onClick={resetAllFilters}
+              >
+                清除筛选
+              </button>
+            )}
           </div>
-        </>
+
+          <div className="filter-row">
+            <select
+              className="filter-select"
+              value={filters.level}
+              onChange={(e) =>
+                patchFilters({ level: e.target.value as DifficultyLevel | "all" })
+              }
+            >
+              <option value="all">全部难度</option>
+              {DIFFICULTY_LEVELS.map((level) => (
+                <option key={level} value={level}>
+                  {difficultyLabel(level)}
+                  {levelCounts.get(level) ? ` (${levelCounts.get(level)})` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
       )}
 
       {!hasLlm && needsCardZh && (
         <p className="muted">设置里填 API Key 后，列表会自动补一两句中文简介。</p>
       )}
       {hasLlm && cardFilling && <p className="muted">正在补中文简介…</p>}
+      {refreshError && (
+        <p className="banner err with-action">
+          <span>刷新失败：{refreshError}</span>
+          <button
+            type="button"
+            className="btn small"
+            onClick={() => {
+              setRefreshError(null);
+              // Same path as the topbar refresh button: invoke + shared event.
+              void api
+                .refreshFeeds()
+                .then((result) => emitEvent("shiyan:refreshed", { result }))
+                .catch((e) =>
+                  emitEvent("shiyan:refreshed", { error: String(e) }),
+                );
+            }}
+          >
+            重试
+          </button>
+        </p>
+      )}
       {cardFillError && (
         <p className="banner err with-action">
           <span>简介未生成：{cardFillError}</span>
@@ -617,22 +587,45 @@ export default function Home() {
       {!loading && articles.length > 0 && displayList.length === 0 && (
         <div className="empty">
           <p>没有符合条件的文章。</p>
+          <button type="button" className="btn small" onClick={resetAllFilters}>
+            清除全部筛选
+          </button>
         </div>
       )}
 
       {displayList.length > 0 && (
         <>
           <div className="list-heading-row">
-            <h2 className="list-heading">{listHeading}</h2>
-            {focusSource && (
-              <button
-                type="button"
-                className="linklike"
-                onClick={() => setFocusSource(null)}
-              >
-                回到今日推荐
-              </button>
-            )}
+            <h2 className="list-heading">
+              {listHeading}
+              {focusSource && <span className="muted"> · {focusSource}</span>}
+            </h2>
+            <div className="tabs-right">
+              {learningStats && (
+                <span className="learning-insight-inline">
+                  {formatLearningInsight(learningStats)} ·{" "}
+                  <Link to="/stats">统计</Link>
+                </span>
+              )}
+              {resumePath && (
+                <button
+                  type="button"
+                  className="linklike"
+                  onClick={() => navigate(resumePath)}
+                >
+                  继续阅读
+                </button>
+              )}
+              {focusSource && (
+                <button
+                  type="button"
+                  className="linklike"
+                  onClick={() => setFocusSource(null)}
+                >
+                  回到今日推荐
+                </button>
+              )}
+            </div>
           </div>
           <ul className="article-list library-list">
             {displayList.map((a) => (
@@ -640,8 +633,7 @@ export default function Home() {
                 key={a.id}
                 article={a}
                 difficulty={difficultyById.get(a.id) ?? null}
-                showSource={!focusSource}
-                showTags={filtersOpen}
+                showSource={!focusSource && !showPicks}
                 highlighted={a.id === selectedId}
               />
             ))}
@@ -651,7 +643,8 @@ export default function Home() {
 
       {popoverMount && <WordPopoverShell {...popoverMount} />}
 
-      {hasMore && (
+      {/* 今日推荐恒 10 篇封顶：该模式不挂无限滚动哨兵，避免空转加载 */}
+      {hasMore && !showPicks && (
         <div ref={sentinelRef}>
           {loadingMore && <p className="muted">加载中…</p>}
         </div>

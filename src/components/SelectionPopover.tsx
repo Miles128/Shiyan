@@ -192,42 +192,59 @@ export default function SelectionPopover({
       {popover.error && <div className="err-inline">{popover.error}</div>}
 
       {popover.detail && popover.detail.senses.length > 0 ? (
-        <ol className="pop-senses">
-          {popover.detail.senses.slice(0, 4).map((sense, i) => (
-            <li key={i}>{sense}</li>
-          ))}
-        </ol>
+        <>
+          <ol className="pop-senses">
+            <li>{popover.detail.senses[0]}</li>
+          </ol>
+          {popover.detail.senses.length > 1 && (
+            <details className="pop-more">
+              <summary>更多释义（{popover.detail.senses.length - 1}）</summary>
+              <ol className="pop-senses">
+                {popover.detail.senses.slice(1, 4).map((sense, i) => (
+                  <li key={i}>{sense}</li>
+                ))}
+              </ol>
+            </details>
+          )}
+        </>
       ) : popover.translation ? (
         <div className="pop-zh">{popover.translation}</div>
       ) : null}
 
       {popover.detail && popover.detail.examples.length > 0 && (
-        <div className="pop-examples">
-          {popover.detail.examples.map((ex, i) => (
-            <div className="pop-example" key={i}>
-              <p className="pop-ex-en">{ex.en}</p>
-              {ex.zh ? <p className="pop-ex-zh">{ex.zh}</p> : null}
-            </div>
-          ))}
-        </div>
+        <details className="pop-more">
+          <summary>例句（{popover.detail.examples.length}）</summary>
+          <div className="pop-examples">
+            {popover.detail.examples.map((ex, i) => (
+              <div className="pop-example" key={i}>
+                <p className="pop-ex-en">{ex.en}</p>
+                {ex.zh ? <p className="pop-ex-zh">{ex.zh}</p> : null}
+              </div>
+            ))}
+          </div>
+        </details>
       )}
 
-      {popover.origin === "local" && (
-        <div className="pop-origin muted">内置词典 · ECDICT / Tatoeba</div>
+      {popover.origin && (
+        <div
+          className="pop-origin muted"
+          title={popover.origin === "local" ? "内置词典 ECDICT / Tatoeba" : "AI 翻译"}
+        >
+          {popover.origin === "local" ? "词典" : "AI"}
+        </div>
       )}
-      {popover.origin === "ai" && <div className="pop-origin muted">AI 翻译</div>}
       <div className="pop-actions">
         <button className="pop-link primary" onClick={onAddVocab}>
           加入生词库
         </button>
         {onAddPhrase ? (
           <button className="pop-link primary" onClick={onAddPhrase}>
-            加入短语组合
+            加入短语
           </button>
         ) : null}
         {onToggleKnown ? (
           <button className="pop-link" onClick={onToggleKnown}>
-            {known ? "取消已知" : "标记已知"}
+            {known ? "取消已认识" : "标为已认识"}
           </button>
         ) : null}
       </div>

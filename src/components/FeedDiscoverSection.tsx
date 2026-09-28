@@ -26,7 +26,7 @@ export default function FeedDiscoverSection({
       <div className="feeds-section-head">
         <h3>
           按分类发现
-          <span className="muted"> · {categoryLabel}</span>
+          <span className="muted"> · 将加入 {categoryLabel} 分类</span>
         </h3>
         <button
           type="button"

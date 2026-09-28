@@ -51,13 +51,31 @@ export function describePlacementResult(input: {
   if (!input.saved) {
     return {
       title: "测验完成",
-      summary: `大约认识约 ${input.shownL} 词 · 设置未写入，请重试`,
+      summary: `大约认识 ${input.shownL} 词 · 设置未写入，请重试`,
     };
   }
   return {
     title: "测验完成",
-    summary: `大约认识约 ${input.shownL} 词 · 已设为 ${bandLabel} / ${input.cefrLevel}`,
+    summary: `大约认识 ${input.shownL} 词 · 已设为 ${bandLabel} / ${input.cefrLevel}`,
   };
+}
+
+/**
+ * One shared copy for "my level" surfaces (Vocab header, Settings):
+ * `我的词频水平：约 N 词 · 上次测验 <time>` or null when never tested.
+ */
+export function placementSummaryText(cfg: {
+  vocab_placement_done?: boolean;
+  vocab_placement_l?: number | null;
+  vocab_placement_at?: string | null;
+  freq_band?: number;
+}): string | null {
+  if (!cfg.vocab_placement_done) return null;
+  const words = Math.round(cfg.vocab_placement_l ?? cfg.freq_band ?? 0);
+  const when = cfg.vocab_placement_at
+    ? ` · 上次测验 ${new Date(cfg.vocab_placement_at).toLocaleString()}`
+    : "";
+  return `我的词频水平：约 ${words} 词${when}`;
 }
 
 export function clampL(L: number): number {
