@@ -508,6 +508,21 @@ pub fn list_article_content_lengths(
     Ok(rows)
 }
 
+/// source name → article count in the library. Feeds the sidebar's per-category
+/// count sort / zero-article hiding; articles carry the feed *name* (not id),
+/// so the map is keyed by name just like `source_priority_map`.
+pub fn article_counts_by_source(
+    conn: &Connection,
+) -> Result<std::collections::HashMap<String, i64>, AppError> {
+    let mut stmt = conn.prepare("SELECT source, COUNT(*) FROM articles GROUP BY source")?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?
+        .collect::<Result<std::collections::HashMap<_, _>, _>>()?;
+    Ok(rows)
+}
+
 /// Insert only when `url` is new. Returns `true` if inserted, `false` if already present.
 /// Idempotent: never overwrites existing content / translations.
 pub fn insert_article_if_new(conn: &Connection, a: &Article) -> Result<bool, AppError> {

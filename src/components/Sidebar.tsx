@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useShell } from "../store";
 import { useToast } from "./Toaster";
-import { api, type FeedCategory, type FeedSource } from "../api";
+import { api, type FeedCategory } from "../api";
+import { groupSidebarFeeds, type SidebarGroup } from "../sidebarDerived";
 
 /** Stable accent per category so the tree and the collapsed rail read alike. */
 const CATEGORY_COLOR: Record<string, string> = {
@@ -12,13 +13,6 @@ const CATEGORY_COLOR: Record<string, string> = {
 };
 /** Extra accents for user-created categories, picked deterministically. */
 const CUSTOM_COLORS = ["#7a4fa3", "#b5542d", "#2d7db5", "#4fa372", "#a34f6e", "#6e7a2d"];
-/** Fixed top-level order for the built-in categories (mirrors the DB seed). */
-const CATEGORY_ORDER: { id: string; label: string }[] = [
-  { id: "tech", label: "科技" },
-  { id: "finance", label: "财经" },
-  { id: "world", label: "国际" },
-  { id: "other", label: "其他" },
-];
 /** Drag-to-resize width: persisted so the choice survives route changes. */
 const WIDTH_KEY = "shiyan.sidebarWidth";
 const MIN_SIDEBAR_W = 200;
@@ -54,8 +48,9 @@ type Props = {
 /**
  * Codex-style minimal tree: 今日推荐 + one node per category, each expandable
  * via a +/− sign to reveal its member sources. Category nodes toggle expansion
- * only (they never filter); sources are draggable within their own category,
- * which is what drives the per-category ranking bonus.
+ * only (they never filter); sources display by library article count, and
+ * dragging within a category still assigns priority (it feeds the home
+ * ranking bonus — the row simply returns to its count-sorted slot on drop).
  */
 export default function Sidebar({ collapsed, onExpand }: Props) {
   const {
@@ -67,28 +62,28 @@ export default function Sidebar({ collapsed, onExpand }: Props) {
   } = useShell();
   const toast = useToast();
 
-  // Categories are DB-driven (built-ins + user-created). Reloaded whenever
-  // feeds reload so a new category appears without an app restart.
+  // Categories are DB-driven (built-ins + user-created), and article counts
+  // come from a lightweight GROUP BY. Both reload whenever feeds reload —
+  // the shell bumps `feeds` after every refresh ("shiyan:refreshed"), so
+  // counts stay in step with new articles without a second wiring.
   const [cats, setCats] = useState<FeedCategory[]>([]);
+  const [counts, setCounts] = useState<Record<string, number>>({});
   useEffect(() => {
     let alive = true;
-    void api
-      .listFeedCategories()
-      .then((list) => {
-        if (alive) setCats(list);
+    void Promise.all([
+      api.listFeedCategories(),
+      api.listSourceArticleCounts(),
+    ])
+      .then(([list, countMap]) => {
+        if (!alive) return;
+        setCats(list);
+        setCounts(countMap);
       })
       .catch(() => undefined);
     return () => {
       alive = false;
     };
   }, [feeds, reloadFeeds]);
-
-  const labelById = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const c of CATEGORY_ORDER) m.set(c.id, c.label);
-    for (const c of cats) m.set(c.id, c.label);
-    return m;
-  }, [cats]);
 
   // Expanded branches; unknown keys default to open (`!== false` below).
   const [open, setOpen] = useState<Record<string, boolean>>({});
@@ -158,33 +153,13 @@ export default function Sidebar({ collapsed, onExpand }: Props) {
     window.addEventListener("pointercancel", up);
   }
 
-  // Group feeds by category: built-ins in seed order, then user-created
-  // categories in DB order (builtin DESC, label). Feeds whose category is
-  // unknown to the DB still get a group so nothing disappears.
-  const grouped = useMemo(() => {
-    const byCat = new Map<string, FeedSource[]>();
-    for (const f of feeds) {
-      const arr = byCat.get(f.category);
-      if (arr) arr.push(f);
-      else byCat.set(f.category, [f]);
-    }
-    const order: string[] = [
-      ...CATEGORY_ORDER.map((c) => c.id),
-      ...cats.filter((c) => !CATEGORY_ORDER.some((b) => b.id === c.id)).map((c) => c.id),
-    ];
-    for (const cat of byCat.keys()) if (!order.includes(cat)) order.push(cat);
-    return order
-      .filter((cat) => (byCat.get(cat)?.length ?? 0) > 0)
-      .map((cat) => {
-        const list = byCat.get(cat)!;
-        // enabled first, then disabled — muting de-prioritises visibly.
-        const sorted = [
-          ...list.filter((f) => f.enabled),
-          ...list.filter((f) => !f.enabled),
-        ];
-        return { cat, label: labelById.get(cat) ?? cat, feeds: sorted };
-      });
-  }, [feeds, cats, labelById]);
+  // Group feeds by category: enabled first, then by library article count
+  // (see sidebarDerived.groupSidebarFeeds for the full contract, including
+  // zero-article hiding and the user-feed exemption).
+  const grouped: SidebarGroup[] = useMemo(
+    () => groupSidebarFeeds(feeds, cats, counts),
+    [feeds, cats, counts],
+  );
 
   function commitMove(cat: string, from: number, to: number) {
     const group = grouped.find((g) => g.cat === cat);
@@ -366,13 +341,11 @@ export default function Sidebar({ collapsed, onExpand }: Props) {
                     }}
                     onPointerDown={(e) => beginSort(e, g.cat, index)}
                   >
-                    <span
-                      className="source-dot"
-                      style={{ background: dotColor(f.category) }}
-                    />
+                    <span className="source-dot" style={{ background: dotColor(f.category) }} />
                     <span className="source-name" title={f.name}>
                       {f.name}
                     </span>
+                    <span className="source-count">{f.articleCount}</span>
                   </div>
                 ))}
               </div>

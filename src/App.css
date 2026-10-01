@@ -318,6 +318,20 @@ body.is-sorting {
   white-space: nowrap;
 }
 
+/* Library article count for the source — the sidebar's sort key. */
+.source-count {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 0.68em;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The dragged row lifts above siblings; keep its badge from shrinking. */
+.tree-leaf.is-dragging .source-count {
+  opacity: 1;
+}
+
 /* Single-list view heading (今日推荐 / focused source / filtered). */
 .list-heading-row {
   display: flex;

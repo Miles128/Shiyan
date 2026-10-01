@@ -17,6 +17,9 @@ export const apiFeeds = {
   /** Delete a user-subscribed feed; curated feeds are disable-only. */
   deleteFeedSource: (id: string) => invoke<void>("delete_feed_source", { id }),
   listFeedCategories: () => invoke<FeedCategory[]>("list_feed_categories"),
+  /** source name → article count; drives the sidebar's count sort + hiding. */
+  listSourceArticleCounts: () =>
+    invoke<Record<string, number>>("list_source_article_counts"),
   addFeedCategory: (label: string) =>
     invoke<FeedCategory>("add_feed_category", { label }),
   discoverFeeds: (categoryId: string) =>

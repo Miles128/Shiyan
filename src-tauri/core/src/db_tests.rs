@@ -271,6 +271,24 @@ fn insert_article_if_new_is_idempotent() {
 }
 
 #[test]
+fn article_counts_by_source_groups_by_name() {
+    let tmp = TmpDb::new("counts");
+    let conn = tmp.conn();
+    for i in 0..3 {
+        let mut a = sample_article(&format!("c1-{i}"));
+        a.source = "Alpha".into();
+        assert!(db::insert_article_if_new(&conn, &a).unwrap());
+    }
+    let mut b = sample_article("c2-0");
+    b.source = "Beta".into();
+    assert!(db::insert_article_if_new(&conn, &b).unwrap());
+    let counts = db::article_counts_by_source(&conn).unwrap();
+    assert_eq!(counts.get("Alpha"), Some(&3));
+    assert_eq!(counts.get("Beta"), Some(&1));
+    assert!(!counts.contains_key("Gamma"));
+}
+
+#[test]
 fn list_article_urls_supports_incremental_skip() {
     let tmp = TmpDb::new("urls");
     let conn = tmp.conn();

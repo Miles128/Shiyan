@@ -45,6 +45,16 @@ pub fn list_feed_categories(
     db::list_feed_categories(&conn)
 }
 
+/// source name → article count, for the sidebar's per-category count sort and
+/// zero-article hiding. Keyed by feed name (articles store the name, not id).
+#[tauri::command]
+pub fn list_source_article_counts(
+    state: tauri::State<'_, DbState>,
+) -> Result<std::collections::HashMap<String, i64>, AppError> {
+    let conn = state.lock_read()?;
+    db::article_counts_by_source(&conn)
+}
+
 #[tauri::command]
 pub fn add_feed_category(
     state: tauri::State<'_, DbState>,
