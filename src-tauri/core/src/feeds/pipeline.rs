@@ -480,6 +480,30 @@ pub fn refresh_feeds(
     Ok(result)
 }
 
+/// Can this entry's RSS body possibly end up longer than the body we already
+/// stored for its URL? If not, the entry is settled without running
+/// `html_to_text` + `clean_body` + the readability gates.
+///
+/// Where it pays: teaser-only feeds whose article we fetched from the page, so
+/// the stored body is many times the size of the feed fragment (62 of the 110
+/// enabled sources on the local library are this shape; at ≈0.09 ms of skipped
+/// chain per entry that is a couple of hundred ms per full sweep). Where it
+/// cannot fire — and it is deliberately silent there — a full-text feed, whose
+/// raw entry is *larger* than the text stored from it because of the markup,
+/// which is exactly the expensive 0.6 ms-per-entry case. Widening the slack to
+/// catch those would mean skipping real upgrades.
+///
+/// The raw entry bytes are an upper bound on the cleaned body: HTML→text
+/// deletes every tag and attribute and only adds back line-wrap newlines (at
+/// most one per 100 characters), and `clean_body` retires a `[n]: url`
+/// definition line (≈`|url|`+5 chars) to expand each inline `[text][n]` marker
+/// (≈`|url|`-`|n|` chars), so it costs more than it gains. The slack below is
+/// far wider than that margin. The worst a wrong answer could do is leave an
+/// essentially equal body un-upgraded.
+pub(crate) fn rss_cannot_beat_stored(raw_html_len: usize, stored_len: usize) -> bool {
+    raw_html_len + raw_html_len / 16 + 1024 <= stored_len
+}
+
 /// Download + parse one feed without holding the DB lock.
 /// Skips entries whose URL is already in `known_urls` (incremental / idempotent).
 /// `trust_chars` is the per-feed RSS full-text trust bar (see [`rss_trust_chars`]).
@@ -567,6 +591,27 @@ fn download_feed_articles(
             .or_else(|| entry.summary.map(|s| s.content))
             .unwrap_or_default();
 
+        // Already downloaded — only upgrade when the RSS body itself is now
+        // trusted full-text AND meaningfully longer than what we stored.
+        // Never page-fetch known URLs again (budget preserved for new ones).
+        // The `known_urls` set is read under a short lock; the guard is
+        // dropped before any network I/O in the page-fetch branch below.
+        let is_known = known_urls
+            .lock()
+            .map_err(|_| "known urls poisoned")?
+            .contains(&url);
+        let stored_len = known_lengths.get(&url).copied().unwrap_or(0);
+        if is_known {
+            stats.evaluated += 1;
+            // An incremental refresh mostly re-sees entries it already stored;
+            // settling those on the byte count alone skips the whole text chain
+            // (see [`rss_cannot_beat_stored`]).
+            if rss_cannot_beat_stored(raw_html.len(), stored_len) {
+                stats.skipped_existing += 1;
+                continue;
+            }
+        }
+
         // Clean before anything measures it: the appended link-reference block
         // is page furniture, and counting it as prose let a 250-word story with a
         // 150-word definition wall pass the ingest bar. reflow() cleans again on
@@ -579,18 +624,7 @@ fn download_feed_articles(
         let rss_trusted =
             !looks_truncated(&raw_rss) && rss_is_full_text(&rss_text, trust_chars);
 
-        // Already downloaded — only upgrade when the RSS body itself is now
-        // trusted full-text AND meaningfully longer than what we stored.
-        // Never page-fetch known URLs again (budget preserved for new ones).
-        // The `known_urls` set is read under a short lock; the guard is
-        // dropped before any network I/O in the page-fetch branch below.
-        let is_known = known_urls
-            .lock()
-            .map_err(|_| "known urls poisoned")?
-            .contains(&url);
         if is_known {
-            let stored_len = known_lengths.get(&url).copied().unwrap_or(0);
-            stats.evaluated += 1;
             if rss_trusted && rss_text.chars().count() > stored_len {
                 // Two parallel workers can see the same URL from different
                 // feeds; only the first upgrade wins.

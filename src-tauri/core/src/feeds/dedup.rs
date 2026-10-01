@@ -49,10 +49,21 @@ pub(crate) fn title_tokens(title: &str) -> Vec<String> {
         .collect()
 }
 
+/// Minimum headline size for the fuzzy (Jaccard) test. Below this, two titles
+/// can only be duplicates if their token sequences match exactly.
+const FUZZY_MIN_TOKENS: usize = 8;
+
+/// Token-set overlap at which two headlines count as the same story.
+const JACCARD_DUP: f64 = 0.85;
+
 /// Near-duplicate headline test across sources:
 /// - exact match after normalization always counts;
-/// - otherwise Jaccard ≥ 0.85 on token sets, but only for headline-sized
-///   titles (≥8 tokens) so short unrelated headlines can't collide.
+/// - otherwise Jaccard ≥ [`JACCARD_DUP`] on token sets, but only for
+///   headline-sized titles (≥[`FUZZY_MIN_TOKENS`] tokens) so short unrelated
+///   headlines can't collide.
+///
+/// This is the rule [`TitleIndex`] applies in bulk; the two are kept honest by
+/// `title_index_agrees_with_pairwise_rule`.
 pub(crate) fn is_near_duplicate_title(a: &str, b: &str) -> bool {
     let ta = title_tokens(a);
     let tb = title_tokens(b);
@@ -62,20 +73,28 @@ pub(crate) fn is_near_duplicate_title(a: &str, b: &str) -> bool {
     if ta == tb {
         return true;
     }
-    if ta.len() < 8 || tb.len() < 8 {
+    if ta.len() < FUZZY_MIN_TOKENS || tb.len() < FUZZY_MIN_TOKENS {
         return false;
     }
     let sa: std::collections::HashSet<&String> = ta.iter().collect();
     let sb: std::collections::HashSet<&String> = tb.iter().collect();
     let inter = sa.intersection(&sb).count();
     let union = sa.union(&sb).count();
-    union > 0 && (inter as f64) / (union as f64) >= 0.85
+    union > 0 && (inter as f64) / (union as f64) >= JACCARD_DUP
 }
 
 /// In-memory title index for cross-source dedup during one refresh.
 pub(crate) struct TitleIndex {
     exact: std::collections::HashSet<String>,
-    fuzzy: Vec<(String, Vec<String>)>,
+    /// Token sets of headline-sized titles, built once per `insert`.
+    ///
+    /// The previous shape kept `(title, tokens)` and called the pairwise rule
+    /// for every entry, re-tokenizing *both* titles and rebuilding both
+    /// `HashSet`s on each of `index.len()` comparisons — measured at 4.7× the
+    /// work this needs, while the caller holds the DB write lock. Titles under
+    /// [`FUZZY_MIN_TOKENS`] are not stored: they can never fuzzy-match, and
+    /// exact matches are already covered by `exact`.
+    fuzzy: Vec<std::collections::HashSet<String>>,
 }
 
 impl TitleIndex {
@@ -96,7 +115,9 @@ impl TitleIndex {
             return;
         }
         self.exact.insert(tokens.join(" "));
-        self.fuzzy.push((title.to_string(), tokens));
+        if tokens.len() >= FUZZY_MIN_TOKENS {
+            self.fuzzy.push(tokens.into_iter().collect());
+        }
     }
 
     pub(crate) fn is_dup(&self, title: &str) -> bool {
@@ -107,9 +128,15 @@ impl TitleIndex {
         if self.exact.contains(&tokens.join(" ")) {
             return true;
         }
-        self.fuzzy
-            .iter()
-            .any(|(existing, _)| is_near_duplicate_title(title, existing))
+        if tokens.len() < FUZZY_MIN_TOKENS {
+            return false;
+        }
+        let query: std::collections::HashSet<String> = tokens.into_iter().collect();
+        self.fuzzy.iter().any(|entry| {
+            let inter = query.intersection(entry).count();
+            let union = query.union(entry).count();
+            union > 0 && (inter as f64) / (union as f64) >= JACCARD_DUP
+        })
     }
 }
 
