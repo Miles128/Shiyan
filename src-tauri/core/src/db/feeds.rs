@@ -1,5 +1,6 @@
 use crate::error::AppError;
 use super::{curated_feeds, FeedCategory, FeedSource};
+use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
 
@@ -40,9 +41,10 @@ pub(crate) fn seed_feeds(conn: &Connection) -> Result<(), AppError> {
         if removed.contains(f.id.as_str()) {
             continue;
         }
+        // 新种子从入库起算 30 天观察期；已存在的行被 IGNORE，保留原计时。
         conn.execute(
-            "INSERT OR IGNORE INTO feed_sources (id, name, category, url, enabled, origin, description) VALUES (?1,?2,?3,?4,1,'curated','')",
-            params![f.id, f.name, f.category, f.url],
+            "INSERT OR IGNORE INTO feed_sources (id, name, category, url, enabled, origin, description, last_new_article_at) VALUES (?1,?2,?3,?4,1,'curated','',?5)",
+            params![f.id, f.name, f.category, f.url, Utc::now().to_rfc3339()],
         )
         ?;
         // Keep name/category/url/origin in sync if we retarget a curated id.
@@ -66,7 +68,7 @@ pub(crate) fn seed_feeds(conn: &Connection) -> Result<(), AppError> {
 pub fn list_feeds(conn: &Connection) -> Result<Vec<FeedSource>, AppError> {
     let mut stmt = conn
         .prepare(
-            "SELECT id,name,category,url,enabled,origin,description,etag,last_fetched_at,fulltext_ratio,priority FROM feed_sources ORDER BY category, priority DESC, name",
+            "SELECT id,name,category,url,enabled,origin,description,etag,last_fetched_at,fulltext_ratio,priority,last_new_article_at FROM feed_sources ORDER BY category, priority DESC, name",
         )
         ?;
     let rows = stmt
@@ -121,11 +123,19 @@ pub fn reorder_feeds(conn: &Connection, ordered_ids: &[String]) -> Result<(), Ap
 }
 
 pub fn set_feed_enabled(conn: &Connection, id: &str, enabled: bool) -> Result<(), AppError> {
-    conn.execute(
-        "UPDATE feed_sources SET enabled=?1 WHERE id=?2",
-        params![if enabled { 1 } else { 0 }, id],
-    )
-    ?;
+    if enabled {
+        // 重新启用 = 重新观察：沉寂计时从当下起算，否则停用数月后刚唤醒
+        // 的源会在下一次刷新末尾被「30 天无新文章」清退。
+        conn.execute(
+            "UPDATE feed_sources SET enabled=1, last_new_article_at=?2 WHERE id=?1",
+            params![id, Utc::now().to_rfc3339()],
+        )?;
+    } else {
+        conn.execute(
+            "UPDATE feed_sources SET enabled=0 WHERE id=?1",
+            params![id],
+        )?;
+    }
     Ok(())
 }
 
@@ -243,9 +253,11 @@ pub fn subscribe_feed(
 
     // Existing by URL?
     if let Some(existing) = find_feed_by_url(conn, url)? {
+        // Re-subscribing a known URL re-enables it and restarts the stale
+        // clock (same rationale as set_feed_enabled).
         conn.execute(
-            "UPDATE feed_sources SET name=?1, category=?2, description=?3, enabled=1 WHERE id=?4",
-            params![name, category, description, existing.id],
+            "UPDATE feed_sources SET name=?1, category=?2, description=?3, enabled=1, last_new_article_at=?5 WHERE id=?4",
+            params![name, category, description, existing.id, Utc::now().to_rfc3339()],
         )
         ?;
         return Ok(FeedSource {
@@ -268,8 +280,8 @@ pub fn subscribe_feed(
     };
 
     conn.execute(
-        "INSERT INTO feed_sources (id, name, category, url, enabled, origin, description) VALUES (?1,?2,?3,?4,1,'user',?5)",
-        params![id, name, category, url, description],
+        "INSERT INTO feed_sources (id, name, category, url, enabled, origin, description, last_new_article_at) VALUES (?1,?2,?3,?4,1,'user',?5,?6)",
+        params![id, name, category, url, description, Utc::now().to_rfc3339()],
     )
     ?;
 
@@ -315,7 +327,7 @@ pub(crate) fn removed_feed_ids(conn: &Connection) -> Result<std::collections::Ha
 }
 
 fn find_feed_by_url(conn: &Connection, url: &str) -> Result<Option<FeedSource>, AppError> {    conn.query_row(
-        "SELECT id,name,category,url,enabled,origin,description,etag,last_fetched_at,fulltext_ratio,priority FROM feed_sources WHERE url=?1",
+        "SELECT id,name,category,url,enabled,origin,description,etag,last_fetched_at,fulltext_ratio,priority,last_new_article_at FROM feed_sources WHERE url=?1",
         params![url],
         map_feed,
     )
@@ -348,28 +360,88 @@ fn map_feed(row: &rusqlite::Row<'_>) -> rusqlite::Result<FeedSource> {
         last_fetched_at: row.get(8)?,
         fulltext_ratio: row.get(9)?,
         priority: row.get(10)?,
+        last_new_article_at: row.get(11)?,
     })
 }
 
 /// Persist per-refresh metadata: HTTP ETag (for 304 reuse), fetch timestamp,
 /// and the observed full-text ratio that adapts the next refresh's trust bar.
 /// `fulltext_ratio` of `None` leaves the stored value untouched.
+/// `new_article_at` of `Some` stamps the rolling "last new article" clock that
+/// the stale-feed prune reads (None keeps it).
 pub fn set_feed_refresh_meta(
     conn: &Connection,
     id: &str,
     etag: Option<&str>,
     last_fetched_at: &str,
     fulltext_ratio: Option<f64>,
+    new_article_at: Option<&str>,
 ) -> Result<(), AppError> {
     conn.execute(
         "UPDATE feed_sources
          SET etag = COALESCE(?2, etag),
              last_fetched_at = ?3,
-             fulltext_ratio = COALESCE(?4, fulltext_ratio)
+             fulltext_ratio = COALESCE(?4, fulltext_ratio),
+             last_new_article_at = COALESCE(?5, last_new_article_at)
          WHERE id=?1",
-        params![id, etag, last_fetched_at, fulltext_ratio],
+        params![id, etag, last_fetched_at, fulltext_ratio, new_article_at],
     )?;
     Ok(())
+}
+
+/// 滚动 `days` 天没有任何新文章的启用源自动退场：精选源删除（写入
+/// removed_feeds 墓碑防启动种子复活），用户自建源只停用（删除留给人）。
+/// 退场时顺带清掉该源未读、未点赞的 rss 文章；点赞的和在读的照旧保护。
+/// 返回被清退的源名，供刷新结果汇报。
+pub fn prune_stale_feeds(conn: &Connection, days: i64) -> Result<Vec<String>, AppError> {
+    if days <= 0 {
+        return Ok(Vec::new());
+    }
+    let cutoff = (Utc::now() - chrono::Duration::days(days)).to_rfc3339();
+    let stale: Vec<(String, String, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, name, origin FROM feed_sources
+              WHERE enabled = 1
+                AND last_new_article_at IS NOT NULL
+                AND last_new_article_at < ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![cutoff], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows
+    };
+    let now = Utc::now().to_rfc3339();
+    let mut pruned = Vec::new();
+    for (id, name, origin) in stale {
+        // 与 purge_rss_below_word_threshold 同一套保护口径：liked 或
+        // 「打开过且未读完」的文章不随源退场。
+        conn.execute(
+            "DELETE FROM articles
+              WHERE source = ?1 AND origin = 'rss' AND liked = 0
+                AND NOT (last_opened_at IS NOT NULL AND read_completed = 0)",
+            params![name],
+        )?;
+        if origin == "user" {
+            conn.execute(
+                "UPDATE feed_sources SET enabled = 0 WHERE id = ?1",
+                params![id],
+            )?;
+        } else {
+            conn.execute(
+                "INSERT OR REPLACE INTO removed_feeds (id, removed_at) VALUES (?1, ?2)",
+                params![id, now],
+            )?;
+            conn.execute("DELETE FROM feed_sources WHERE id = ?1", params![id])?;
+        }
+        pruned.push(name);
+    }
+    Ok(pruned)
 }
 
 fn map_category(row: &rusqlite::Row<'_>) -> rusqlite::Result<FeedCategory> {

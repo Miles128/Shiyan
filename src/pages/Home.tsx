@@ -357,6 +357,9 @@ export default function Home() {
           (result.skipped_duplicate ? ` · 去重 ${result.skipped_duplicate}` : "") +
           (result.purged_teasers ? ` · 清理残篇 ${result.purged_teasers}` : "") +
           (result.purged_old ? ` · 过期清理 ${result.purged_old}` : "") +
+          (result.pruned_stale_feeds
+            ? ` · 清退沉寂源 ${result.pruned_stale_feeds}`
+            : "") +
           (result.feeds_unchanged ? ` · ${result.feeds_unchanged} 源无更新` : "") +
           (result.titles_translated ? ` · 补简介 ${result.titles_translated}` : "") +
           (result.errors.length ? ` · ${result.errors.length} 个问题` : ""),

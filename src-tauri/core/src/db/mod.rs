@@ -139,6 +139,27 @@ pub struct ArticleListItem {
     pub liked: bool,
 }
 
+/// One read-lock snapshot for the home list: the candidate window plus every
+/// affinity input the frontend needs to score it. Ranking lives in TS
+/// (`src/rank.ts`); the backend only gathers rows, so a refresh landing
+/// mid-score can't rank a page against a half-updated profile.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RankWindow {
+    pub items: Vec<ArticleListItem>,
+    #[ts(type = "Record<string, number>")]
+    pub source_opens: std::collections::HashMap<String, i64>,
+    #[ts(type = "Record<string, number>")]
+    pub category_opens: std::collections::HashMap<String, i64>,
+    /// (title, weight) with liked = 2.0, read-to-end = 1.0 — the semantic
+    /// profile input; TS turns it into term weights.
+    pub engaged_titles: Vec<(String, f64)>,
+    #[ts(type = "Record<string, number>")]
+    pub source_priority: std::collections::HashMap<String, i64>,
+    #[ts(type = "Record<string, number>")]
+    pub category_priority_max: std::collections::HashMap<String, i64>,
+}
+
 /// One day of reading activity (UTC date, `YYYY-MM-DD`).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -245,10 +266,14 @@ pub struct FeedSource {
     pub fulltext_ratio: f64,
     /// User-assigned display priority for the sidebar source list. Higher =
     /// surfaced earlier; 0 = never ordered (new feeds default here). Drives the
-    /// home ranking via a source-priority bonus (see `rank::Affinity`).
+    /// home ranking via a source-priority bonus (see `src/rank.ts`).
     #[serde(default)]
     #[ts(type = "number")]
     pub priority: i64,
+    /// 最近一次为该源新增文章的时间（RFC3339）。滚动窗口判沉寂的依据，
+    /// 见 feeds::prune_stale_feeds；重新启用订阅时重置。
+    #[serde(default)]
+    pub last_new_article_at: Option<String>,
 }
 
 fn default_feed_origin() -> String {
@@ -610,7 +635,7 @@ const LEGACY_COLUMN_ADDITIONS: &[&str] = &[
 /// Version-gated migrations. To add one: raise `LATEST_VERSION` and apply its
 /// DDL inside `migrate` when `stored < N`. Stamp each version with its own
 /// number (never `LATEST_VERSION`) so later steps are not skipped.
-const LATEST_VERSION: i64 = 17;
+const LATEST_VERSION: i64 = 18;
 
 /// Run one `ALTER TABLE … ADD COLUMN`, tolerating "duplicate column name" as
 /// a no-op: legacy databases created before version stamping may already have
@@ -926,6 +951,40 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), AppError> {
         }
         conn.pragma_update(None, "user_version", 17)?;
         stored = 17;
+    }
+
+    if stored < 18 {
+        // 沉寂源自动退场：记录每源最近一次产出新文章的时间，滚动 30 天
+        // 无新文章的启用源在刷新末尾被清退（精选删除、用户停用，
+        // 见 feeds::prune_stale_feeds）。存量回填：有文章的源取该源最新
+        // 文章的 fetched_at；从未出过文章的源记为迁移当下，给 30 天观察期。
+        add_column_if_missing(
+            conn,
+            "ALTER TABLE feed_sources ADD COLUMN last_new_article_at TEXT",
+        )?;
+        // Backfill from articles only when the column exists (synthetic /
+        // legacy test databases may lack it); those fall through to the
+        // observation-window stamp below.
+        let has_fetched_at: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('articles') WHERE name='fetched_at'",
+            [],
+            |row| row.get(0),
+        )?;
+        if has_fetched_at == 1 {
+            conn.execute(
+                "UPDATE feed_sources SET last_new_article_at = (
+                     SELECT MAX(a.fetched_at) FROM articles a WHERE a.source = feed_sources.name
+                 ) WHERE last_new_article_at IS NULL",
+                [],
+            )?;
+        }
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE feed_sources SET last_new_article_at = ?1 WHERE last_new_article_at IS NULL",
+            [now],
+        )?;
+        conn.pragma_update(None, "user_version", 18)?;
+        stored = 18;
     }
 
     if stored < LATEST_VERSION {

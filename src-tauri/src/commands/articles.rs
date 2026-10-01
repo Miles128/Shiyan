@@ -1,35 +1,30 @@
 use crate::article_view;
-use crate::db::{self, Article, ArticleListItem, DbState, LearningStats, TranslationRow};
+use crate::db::{self, Article, ArticleListItem, DbState, LearningStats, RankWindow, TranslationRow};
 use crate::error::AppError;
 use crate::feeds;
 use crate::import_file;
 use crate::translate;
 use crate::vocab;
-use chrono::Datelike;
 use tauri::{AppHandle, Emitter};
 
-/// Ranked window size for interest scoring. Wide enough that cursor pages can
+/// Candidate window size for interest scoring. Wide enough that cursor pages can
 /// reach past the first few screens of a daily reading session.
 const RANK_WINDOW: i64 = 800;
 
-/// Cursor + paging params must stay flat for the `invoke` contract, hence the
-/// arity.
-#[allow(clippy::too_many_arguments)]
+/// Gather one read-lock snapshot of the candidate window plus every affinity
+/// input, and hand it to the frontend for scoring (`src/rank.ts`). The backend
+/// only reads rows — no ranking, no paging.
 #[tauri::command]
-pub async fn list_articles_ranked(
+pub async fn list_rank_window(
     app: AppHandle,
     category: Option<String>,
     source: Option<String>,
     unread_only: Option<bool>,
-    limit: Option<i64>,
-    offset: Option<i64>,
-    cursor_score: Option<f64>,
-    cursor_id: Option<String>,
     search: Option<String>,
-) -> Result<Vec<ArticleListItem>, AppError> {
+) -> Result<RankWindow, AppError> {
     crate::commands::spawn_db(app, move |state| {
-        // One snapshot for the page. These queries used to take the read
-        // lock separately, so a refresh landing in between could rank a page
+        // One snapshot for the page. These queries used to take the read lock
+        // separately, so a refresh landing in between could score a page
         // against a half-updated profile.
         let conn = state.lock_read()?;
         let items = db::query_articles(
@@ -49,23 +44,18 @@ pub async fn list_articles_ranked(
             Some(0),
         )?;
         let (source_opens, category_opens) = db::affinity_open_counts(&conn)?;
-        let term_weights =
-            crate::rank::build_term_weights(&db::engaged_titles(&conn)?);
-        let (source_priority, category_priority_max) =
-            (db::source_priority_map(&conn)?, db::category_priority_max(&conn)?);
+        let engaged_titles = db::engaged_titles(&conn)?;
+        let source_priority = db::source_priority_map(&conn)?;
+        let category_priority_max = db::category_priority_max(&conn)?;
         drop(conn);
-        let affinity = crate::rank::Affinity::from_maps(source_opens, category_opens, term_weights)
-            .with_source_priority(source_priority, category_priority_max);
-        let now = chrono::Utc::now();
-        let day_key = i64::from(now.num_days_from_ce());
-        let ranked = crate::rank::rank_articles(items, &affinity, now, day_key);
-        let cursor = match (cursor_score, cursor_id) {
-            (Some(score), Some(id)) => Some((score, id)),
-            _ => None,
-        };
-        let start = offset.unwrap_or(0).max(0) as usize;
-        let take = limit.unwrap_or(60).max(0) as usize;
-        Ok(crate::rank::page_ranked(ranked, cursor, start, take))
+        Ok(RankWindow {
+            items,
+            source_opens,
+            category_opens,
+            engaged_titles,
+            source_priority,
+            category_priority_max,
+        })
     })
     .await
 }

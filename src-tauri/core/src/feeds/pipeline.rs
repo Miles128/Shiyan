@@ -31,6 +31,9 @@ const PARALLEL_FEEDS: usize = 4;
 /// completion; when the budget is exhausted the enrich phases are skipped and
 /// noted in `result.errors` so a slow LLM never holds a refresh hostage.
 const ENRICH_BUDGET: std::time::Duration = std::time::Duration::from_secs(90);
+/// 滚动窗口：启用中的源这么多天没有产出任何新文章，就在刷新末尾退场
+/// （精选删除、用户停用，见 db::prune_stale_feeds）。
+const STALE_FEED_DAYS: i64 = 30;
 
 /// Cooperative cancel flag for an in-flight refresh. Set by the shell's
 /// `cancel_refresh` command; the download workers and the enrich phases poll
@@ -69,6 +72,8 @@ pub struct RefreshResult {
     pub purged_teasers: usize,
     /// Retention removals (articles older than the configured window).
     pub purged_old: usize,
+    /// Stale feeds retired this refresh (30-day rolling window, no new articles).
+    pub pruned_stale_feeds: usize,
     pub feeds_unchanged: usize,
     pub titles_translated: usize,
     pub errors: Vec<String>,
@@ -124,6 +129,7 @@ fn note_failure(shared: &Shared<'_>, feed_name: &str, error: impl std::fmt::Disp
 /// refresh re-fetches it.
 ///
 /// `Err` means stop writing this feed; everything committed so far stays.
+/// Returns the number of rows newly inserted this call.
 fn persist_articles(
     db: &DbState,
     shared: &Shared<'_>,
@@ -131,7 +137,8 @@ fn persist_articles(
     known_urls: &std::sync::Mutex<HashSet<String>>,
     title_index: &std::sync::Mutex<TitleIndex>,
     stats: &mut DownloadStats,
-) -> Result<(), AppError> {
+) -> Result<usize, AppError> {
+    let mut inserted = 0usize;
     for chunk in articles.chunks(WRITE_BATCH_SIZE) {
         let conn = db.lock_write()?;
         let tx = conn.unchecked_transaction()?;
@@ -155,6 +162,7 @@ fn persist_articles(
                         .unwrap_or_else(|e| e.into_inner())
                         .insert(&article.title);
                     shared.lock().unwrap_or_else(|e| e.into_inner()).added_or_updated += 1;
+                    inserted += 1;
                 }
                 Ok(false) => stats.skipped_existing += 1,
                 Err(e) => return Err(e),
@@ -162,7 +170,7 @@ fn persist_articles(
         }
         tx.commit()?;
     }
-    Ok(())
+    Ok(inserted)
 }
 
 /// Upgrade the stored body of articles already in the library, again as a
@@ -345,6 +353,7 @@ pub fn refresh_feeds(
                             (shared.lock().unwrap_or_else(|e| e.into_inner())).feeds_unchanged += 1;
                         }
                         let mut stats = download.stats;
+                        let mut inserted = 0usize;
                         let insert_ok = match persist_articles(
                             db,
                             &shared,
@@ -353,7 +362,10 @@ pub fn refresh_feeds(
                             &title_index,
                             &mut stats,
                         ) {
-                            Ok(()) => true,
+                            Ok(n) => {
+                                inserted = n;
+                                true
+                            }
                             Err(e) => {
                                 ok = false;
                                 note_failure(&shared, &feed.name, e);
@@ -391,6 +403,8 @@ pub fn refresh_feeds(
                                     download.etag.as_deref(),
                                     &now,
                                     ratio,
+                                    // 有新文章才走动沉寂计时钟；升级旧文不算。
+                                    (inserted > 0).then(|| now.as_str()),
                                 ) {
                                     ok = false;
                                     note_failure(&shared, &feed.name, e);
@@ -428,6 +442,27 @@ pub fn refresh_feeds(
     clear_refresh_cancel();
     if cancelled {
         result.errors.push("已取消刷新，已保留新增内容".into());
+    }
+
+    // 沉寂源退场：滚动 30 天无新文章的启用源。放在下载全部完成后，
+    // 让本轮有产出的源先把计时钟走掉；取消的刷新不判沉寂——没跑完的
+    // 源会被冤枉。
+    if !cancelled {
+        match db.lock_write() {
+            Ok(conn) => match db::prune_stale_feeds(&conn, STALE_FEED_DAYS) {
+                Ok(names) if !names.is_empty() => {
+                    result.pruned_stale_feeds = names.len();
+                    result.errors.push(format!(
+                        "已移除 {} 个超 30 天无新文章的源：{}",
+                        names.len(),
+                        names.join("、")
+                    ));
+                }
+                Ok(_) => {}
+                Err(e) => result.errors.push(format!("沉寂源清理: {e}")),
+            },
+            Err(e) => result.errors.push(format!("沉寂源清理: {e}")),
+        }
     }
 
     let articles_downloaded = result.added_or_updated;

@@ -1,8 +1,8 @@
-import { invoke } from "@tauri-apps/api/core";
+import { typedInvoke } from "./invoke";
 
 export const apiData = {
   /** Whole-database snapshot via VACUUM INTO; returns the path or null on cancel. */
-  backupDatabase: () => invoke<string | null>("backup_database"),
+  backupDatabase: () => typedInvoke("backup_database"),
   /** Stage a backup file for restore; takes effect after app restart. */
-  restoreDatabase: () => invoke<string>("restore_database"),
+  restoreDatabase: () => typedInvoke("restore_database"),
 };

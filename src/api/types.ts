@@ -3,6 +3,7 @@ import type { AppConfig as RustAppConfig } from "../../src-tauri/core/bindings/A
 
 export type { Article } from "../../src-tauri/core/bindings/Article";
 export type { ArticleListItem } from "../../src-tauri/core/bindings/ArticleListItem";
+export type { RankWindow } from "../../src-tauri/core/bindings/RankWindow";
 export type { LookupEntry } from "../../src-tauri/core/bindings/LookupEntry";
 export type { ArticleView } from "../../src-tauri/core/bindings/ArticleView";
 export type { FeedCategory } from "../../src-tauri/core/bindings/FeedCategory";

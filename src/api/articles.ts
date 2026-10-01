@@ -1,16 +1,13 @@
-import { invoke } from "@tauri-apps/api/core";
-import type {
-  Article,
-  ArticleListItem,
-  ArticleView,
-  FullTranslateResult,
-  LearningStats,
-  ReadingStats,
-  TranslationRow,
-} from "./types";
-
-/** Read-state filter; mirrors the backend's `ReadState`. */
-type ReadStateFilter = "all" | "unfinished" | "unread" | "reading" | "read";
+import { typedInvoke } from "./invoke";
+import type { ReadStateFilter } from "./commands";
+import type { ArticleListItem } from "./types";
+import {
+  buildTermWeights,
+  dayKeyFromMs,
+  pageRanked,
+  rankArticles,
+  type Affinity,
+} from "../rank";
 
 /**
  * Filter shared by both list commands — one place to add a field, instead of
@@ -40,19 +37,34 @@ function filterArgs(filter: ArticleFilter) {
 }
 
 export const apiArticles = {
-  /** Interest-ranked digest window (home). */
-  listArticlesRanked: (
+  /**
+   * Interest-ranked digest window (home). The backend hands back one snapshot
+   * (candidate window + affinity inputs); scoring and cursor paging run here in
+   * `src/rank.ts`, so ranking tweaks no longer need a Rust rebuild.
+   */
+  listArticlesRanked: async (
     filter: ArticleFilter & {
       unreadOnly?: boolean;
       cursor?: { score: number; id: string } | null;
     },
-  ) =>
-    invoke<ArticleListItem[]>("list_articles_ranked", {
-      ...filterArgs(filter),
+  ): Promise<ArticleListItem[]> => {
+    const w = await typedInvoke("list_rank_window", {
+      category: filter.category ?? null,
+      source: filter.source ?? null,
+      search: filter.search?.trim() ? filter.search.trim() : null,
       unreadOnly: filter.unreadOnly ?? null,
-      cursorScore: filter.cursor?.score ?? null,
-      cursorId: filter.cursor?.id ?? null,
-    }),
+    });
+    const affinity: Affinity = {
+      sourceOpens: w.source_opens,
+      categoryOpens: w.category_opens,
+      termWeights: buildTermWeights(w.engaged_titles),
+      sourcePriority: w.source_priority,
+      categoryPriorityMax: w.category_priority_max,
+    };
+    const nowMs = Date.now();
+    const ranked = rankArticles(w.items, affinity, nowMs, dayKeyFromMs(nowMs));
+    return pageRanked(ranked, filter.cursor ?? null, filter.offset ?? 0, filter.limit ?? 60);
+  },
   /** Plain newest-first library list with the full filter set. */
   listLibrary: (
     filter: ArticleFilter & {
@@ -60,47 +72,38 @@ export const apiArticles = {
       likedOnly?: boolean;
     },
   ) =>
-    invoke<ArticleListItem[]>("list_library", {
+    typedInvoke("list_library", {
       ...filterArgs(filter),
       readState: filter.readState ?? null,
       likedOnly: filter.likedOnly ?? null,
     }),
-  getArticleView: (id: string) =>
-    invoke<ArticleView | null>("get_article_view", { id }),
-  markArticleOpened: (id: string) =>
-    invoke<void>("mark_article_opened", { id }),
+  getArticleView: (id: string) => typedInvoke("get_article_view", { id }),
+  markArticleOpened: (id: string) => typedInvoke("mark_article_opened", { id }),
   markArticleProgress: (id: string, dwellMsDelta: number, readCompleted: boolean) =>
-    invoke<void>("mark_article_progress", {
+    typedInvoke("mark_article_progress", {
       id,
       dwellMsDelta,
       readCompleted,
     }),
   setArticleLiked: (id: string, liked: boolean) =>
-    invoke<void>("set_article_liked", { id, liked }),
-  getLearningStats: () => invoke<LearningStats>("get_learning_stats"),
-  getReadingStats: () => invoke<ReadingStats>("get_reading_stats"),
-  fillMissingCardZh: () => invoke<number>("fill_missing_card_zh"),
-  importArticleUrl: (url: string) =>
-    invoke<Article>("import_article_url", { url }),
-  importArticleFile: (path: string) =>
-    invoke<Article>("import_article_file", { path }),
+    typedInvoke("set_article_liked", { id, liked }),
+  getLearningStats: () => typedInvoke("get_learning_stats"),
+  getReadingStats: () => typedInvoke("get_reading_stats"),
+  fillMissingCardZh: () => typedInvoke("fill_missing_card_zh"),
+  importArticleUrl: (url: string) => typedInvoke("import_article_url", { url }),
+  importArticleFile: (path: string) => typedInvoke("import_article_file", { path }),
   /** Re-fetch articles whose stored body lost paragraph breaks. */
   repairParagraphs: (limit?: number) =>
-    invoke<number>("repair_paragraphs", { limit: limit ?? null }),
-  translateParagraph: (
-    articleId: string,
-    paragraphIndex: number,
-    text: string,
-  ) =>
-    invoke<TranslationRow>("translate_paragraph", {
+    typedInvoke("repair_paragraphs", { limit: limit ?? null }),
+  translateParagraph: (articleId: string, paragraphIndex: number, text: string) =>
+    typedInvoke("translate_paragraph", {
       articleId,
       paragraphIndex,
       text,
     }),
   translateSelection: (articleId: string, text: string) =>
-    invoke<TranslationRow>("translate_selection", { articleId, text }),
-  translatePlainText: (text: string) =>
-    invoke<string>("translate_plain_text", { text }),
+    typedInvoke("translate_selection", { articleId, text }),
+  translatePlainText: (text: string) => typedInvoke("translate_plain_text", { text }),
   translateFullArticle: (articleId: string) =>
-    invoke<FullTranslateResult>("translate_full_article", { articleId }),
+    typedInvoke("translate_full_article", { articleId }),
 };

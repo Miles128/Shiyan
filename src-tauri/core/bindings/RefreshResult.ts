@@ -8,4 +8,8 @@ purged_teasers: number,
 /**
  * Retention removals (articles older than the configured window).
  */
-purged_old: number, feeds_unchanged: number, titles_translated: number, errors: Array<string>, };
+purged_old: number, 
+/**
+ * Stale feeds retired this refresh (30-day rolling window, no new articles).
+ */
+pruned_stale_feeds: number, feeds_unchanged: number, titles_translated: number, errors: Array<string>, };

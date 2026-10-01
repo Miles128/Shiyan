@@ -1,37 +1,29 @@
-import { invoke } from "@tauri-apps/api/core";
-import type {
-  FeedCategory,
-  FeedDiscoverCandidate,
-  FeedSource,
-  FeedValidation,
-  RefreshResult,
-} from "./types";
+import { typedInvoke } from "./invoke";
 
 export const apiFeeds = {
-  listFeeds: () => invoke<FeedSource[]>("list_feeds"),
+  listFeeds: () => typedInvoke("list_feeds"),
   setFeedEnabled: (id: string, enabled: boolean) =>
-    invoke<void>("set_feed_enabled", { id, enabled }),
+    typedInvoke("set_feed_enabled", { id, enabled }),
   /** Persist the sidebar drag order (top-to-bottom feed ids). Drives home ranking. */
   reorderFeeds: (orderedIds: string[]) =>
-    invoke<void>("reorder_feeds", { orderedIds }),
+    typedInvoke("reorder_feeds", { orderedIds }),
   /** Delete a user-subscribed feed; curated feeds are disable-only. */
-  deleteFeedSource: (id: string) => invoke<void>("delete_feed_source", { id }),
-  listFeedCategories: () => invoke<FeedCategory[]>("list_feed_categories"),
+  deleteFeedSource: (id: string) => typedInvoke("delete_feed_source", { id }),
+  listFeedCategories: () => typedInvoke("list_feed_categories"),
   /** source name → article count; drives the sidebar's count sort + hiding. */
-  listSourceArticleCounts: () =>
-    invoke<Record<string, number>>("list_source_article_counts"),
+  listSourceArticleCounts: () => typedInvoke("list_source_article_counts"),
   addFeedCategory: (label: string) =>
-    invoke<FeedCategory>("add_feed_category", { label }),
+    typedInvoke("add_feed_category", { label }),
   discoverFeeds: (categoryId: string) =>
-    invoke<FeedDiscoverCandidate[]>("discover_feeds", { categoryId }),
-  validateFeed: (url: string) => invoke<FeedValidation>("validate_feed", { url }),
+    typedInvoke("discover_feeds", { categoryId }),
+  validateFeed: (url: string) => typedInvoke("validate_feed", { url }),
   subscribeFeed: (input: {
     name: string;
     category: string;
     url: string;
     description?: string;
   }) =>
-    invoke<FeedSource>("subscribe_feed", {
+    typedInvoke("subscribe_feed", {
       input: {
         name: input.name,
         category: input.category,
@@ -39,6 +31,6 @@ export const apiFeeds = {
         description: input.description ?? null,
       },
     }),
-  refreshFeeds: () => invoke<RefreshResult>("refresh_feeds"),
-  cancelRefresh: () => invoke<void>("cancel_refresh"),
+  refreshFeeds: () => typedInvoke("refresh_feeds"),
+  cancelRefresh: () => typedInvoke("cancel_refresh"),
 };

@@ -5,7 +5,7 @@ mod commands;
 // re-exports keep `crate::db::…` paths inside the command layer unchanged.
 // `reflow` stays core-internal: only `feeds` and core tests call it.
 use shiyan_core::{
-    article_view, config, db, error, feeds, import_file, rank, srs, translate, vocab,
+    article_view, config, db, error, feeds, import_file, srs, translate, vocab,
 };
 
 use tauri::Manager;
@@ -51,7 +51,7 @@ pub fn run() {
             commands::config::save_config_cmd,
             commands::data::backup_database,
             commands::data::restore_database,
-            commands::articles::list_articles_ranked,
+            commands::articles::list_rank_window,
             commands::articles::list_library,
             commands::articles::get_article_view,
             commands::articles::mark_article_opened,

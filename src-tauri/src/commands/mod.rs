@@ -56,10 +56,11 @@ mod tests {
     use std::fs::read_dir;
     use std::path::Path;
 
-    /// A command with no `invoke` in the frontend cannot be smoke-tested from a
-    /// running window, so "registered" and "called" are compared as text:
-    /// registered-but-uncalled is dead surface (a `lib.rs` line and an adapter
-    /// nothing exercises), called-but-unregistered fails at runtime.
+    /// A command with no `invoke`/`typedInvoke` in the frontend cannot be
+    /// smoke-tested from a running window, so "registered" and "called" are
+    /// compared as text: registered-but-uncalled is dead surface (a `lib.rs`
+    /// line and an adapter nothing exercises), called-but-unregistered fails at
+    /// runtime.
     ///
     /// A command that legitimately has no UI yet belongs in `UNCALLED` with the
     /// reason, so the decision is written down instead of rediscovered.
@@ -96,7 +97,11 @@ mod tests {
 
     fn invoked() -> BTreeSet<String> {
         static RE_INVOKE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-            regex::Regex::new(r#"invoke(?:<[^;()]{0,120}>)?\s*\(\s*"([a-z0-9_]+)""#).unwrap()
+            // `[iI]nvoke` matches both a bare `invoke(` and the `Invoke(` inside
+            // `typedInvoke(` (the frontend's typed wrapper). The inner
+            // `invoke(cmd as string, …)` in invoke.ts has no leading string
+            // literal, so it is not a false positive.
+            regex::Regex::new(r#"[iI]nvoke(?:<[^;()]{0,120}>)?\s*\(\s*"([a-z0-9_]+)""#).unwrap()
         });
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../src");
         let mut files = Vec::new();

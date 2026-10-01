@@ -21,6 +21,7 @@ function feed(
     description: "",
     etag: "",
     last_fetched_at: null,
+    last_new_article_at: null,
     fulltext_ratio: -1,
     priority: 0,
   };

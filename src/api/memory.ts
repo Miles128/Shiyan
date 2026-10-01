@@ -1,7 +1,7 @@
-import { invoke } from "@tauri-apps/api/core";
-import type { LookupEntry, MemoryItem } from "./types";
+import { typedInvoke } from "./invoke";
+import type { MemoryKind } from "./commands";
 
-export type MemoryKind = "word" | "phrase";
+export type { MemoryKind };
 
 export type AddMemoryInput = {
   kind: MemoryKind;
@@ -15,7 +15,7 @@ export type AddMemoryInput = {
 
 export const apiMemory = {
   addMemory: (input: AddMemoryInput) =>
-    invoke<MemoryItem>("add_memory", {
+    typedInvoke("add_memory", {
       input: {
         kind: input.kind,
         term: input.term,
@@ -27,37 +27,36 @@ export const apiMemory = {
       },
     }),
   listMemory: (kind: MemoryKind, status?: string) =>
-    invoke<MemoryItem[]>("list_memory", { kind, status: status ?? null }),
-  dueMemory: (kind: MemoryKind) =>
-    invoke<MemoryItem[]>("due_memory", { kind }),
+    typedInvoke("list_memory", { kind, status: status ?? null }),
+  dueMemory: (kind: MemoryKind) => typedInvoke("due_memory", { kind }),
   reviewMemory: (id: string, rating: string) =>
-    invoke<MemoryItem>("review_memory", { id, rating }),
+    typedInvoke("review_memory", { id, rating }),
   setMemoryStatus: (id: string, status: string) =>
-    invoke<void>("set_memory_status", { id, status }),
-  deleteMemory: (id: string) => invoke<void>("delete_memory", { id }),
+    typedInvoke("set_memory_status", { id, status }),
+  deleteMemory: (id: string) => typedInvoke("delete_memory", { id }),
 
   // Export the whole vocab library (words + phrases) as CSV; returns the
   // written path, or null when the save dialog was cancelled.
-  exportVocabCsv: () => invoke<string | null>("export_memory_csv"),
+  exportVocabCsv: () => typedInvoke("export_memory_csv"),
 
   // Known words: marked as already known, so they stop being highlighted.
-  listKnownWords: () => invoke<string[]>("list_known_words"),
-  addKnownWord: (term: string) => invoke<void>("add_known_word", { term }),
-  removeKnownWord: (term: string) => invoke<void>("remove_known_word", { term }),
+  listKnownWords: () => typedInvoke("list_known_words"),
+  addKnownWord: (term: string) => typedInvoke("add_known_word", { term }),
+  removeKnownWord: (term: string) => typedInvoke("remove_known_word", { term }),
 
   // Lookup history: every term resolved via the selection popover.
   recordLookup: (term: string, context?: string | null, articleId?: string | null) =>
-    invoke<void>("record_lookup", {
+    typedInvoke("record_lookup", {
       term,
       context: context ?? null,
       articleId: articleId ?? null,
     }),
   listLookups: (search?: string, limit?: number, offset?: number) =>
-    invoke<LookupEntry[]>("list_lookups", {
+    typedInvoke("list_lookups", {
       search: search ?? null,
       limit: limit ?? null,
       offset: offset ?? null,
     }),
-  deleteLookup: (id: number) => invoke<void>("delete_lookup", { id }),
-  clearLookups: () => invoke<void>("clear_lookups"),
+  deleteLookup: (id: number) => typedInvoke("delete_lookup", { id }),
+  clearLookups: () => typedInvoke("clear_lookups"),
 };

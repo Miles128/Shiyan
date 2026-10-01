@@ -338,6 +338,12 @@ export default function Reader() {
     setVisibleParas({});
     setBusyPara(null);
     setFullProgress(null);
+    // Gate detection on the body being on screen. While the article is still
+    // loading the document is short, so `scrollHeight - 400` is already under
+    // the fold: an ungated check self-completes on mount, latches, and marks
+    // every opened article read (and fires the toast invisibly) before it is
+    // actually read. Re-runs when `view` flips to ready, which re-arms it.
+    if (view !== "ready") return;
     let lastSaved = 0;
     const onScroll = () => {
       const now = Date.now();
@@ -356,7 +362,7 @@ export default function Reader() {
       window.removeEventListener("scroll", onScroll);
       saveScroll(id, window.scrollY);
     };
-  }, [id, tryComplete]);
+  }, [id, tryComplete, view]);
 
   function toggleLiked() {
     if (!id) return;

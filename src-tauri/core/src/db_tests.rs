@@ -274,6 +274,7 @@ fn insert_article_if_new_is_idempotent() {
 fn article_counts_by_source_groups_by_name() {
     let tmp = TmpDb::new("counts");
     let conn = tmp.conn();
+
     for i in 0..3 {
         let mut a = sample_article(&format!("c1-{i}"));
         a.source = "Alpha".into();
@@ -282,6 +283,7 @@ fn article_counts_by_source_groups_by_name() {
     let mut b = sample_article("c2-0");
     b.source = "Beta".into();
     assert!(db::insert_article_if_new(&conn, &b).unwrap());
+
     let counts = db::article_counts_by_source(&conn).unwrap();
     assert_eq!(counts.get("Alpha"), Some(&3));
     assert_eq!(counts.get("Beta"), Some(&1));
@@ -1191,7 +1193,7 @@ fn v10_migration_merges_vocab_and_phrases_into_memory_items() {
     assert_eq!(
         conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        17
+        18
     );
     let words = db::list_memory(&conn, Some("word"), None).unwrap();
     let phrases = db::list_memory(&conn, Some("phrase"), None).unwrap();
@@ -1236,10 +1238,10 @@ fn migration_snapshot_is_written_before_version_bump() {
     std::fs::create_dir_all(&up_to_date).unwrap();
     let current = up_to_date.join("shiyan.db");
     let conn2 = rusqlite::Connection::open(&current).unwrap();
-    conn2.pragma_update(None, "user_version", 17).unwrap();
+    conn2.pragma_update(None, "user_version", 18).unwrap();
     db::backup_before_migration(&conn2, &current);
     assert!(!current
-        .with_file_name("shiyan.db.premigrate-v17.bak")
+        .with_file_name("shiyan.db.premigrate-v18.bak")
         .exists());
 }
 
@@ -1259,7 +1261,250 @@ fn v17_drops_tags_json_column() {
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 17);
+    assert_eq!(version, 18);
+}
+
+#[test]
+fn v18_adds_and_backfills_last_new_article_at() {
+    let tmp = TmpDb::new("v18");
+    let conn = tmp.conn();
+    // Fresh DB: column exists, every feed got a non-null clock (observation
+    // window starts now for sources that never produced an article).
+    let null_clocks: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM feed_sources WHERE last_new_article_at IS NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(null_clocks, 0);
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 18);
+}
+
+#[test]
+fn v18_backfills_clock_from_latest_article_per_source() {
+    let tmp = TmpDb::new("v18-backfill");
+    let conn = rusqlite::Connection::open(tmp.file()).unwrap();
+    // Minimal pre-v18 shape: only what the v18 gate touches.
+    conn.execute_batch(
+        "CREATE TABLE articles (id TEXT PRIMARY KEY, url TEXT NOT NULL UNIQUE, title TEXT NOT NULL,
+             source TEXT NOT NULL, fetched_at TEXT NOT NULL);
+         CREATE TABLE feed_sources (id TEXT PRIMARY KEY, name TEXT NOT NULL, category TEXT NOT NULL,
+             url TEXT NOT NULL UNIQUE, enabled INTEGER NOT NULL DEFAULT 1,
+             origin TEXT NOT NULL DEFAULT 'curated', description TEXT NOT NULL DEFAULT '');
+         INSERT INTO feed_sources (id, name, category, url) VALUES
+            ('f1','With Articles','tech','https://a.example/rss'),
+            ('f2','No Articles','tech','https://b.example/rss');
+         INSERT INTO articles (id, url, title, source, fetched_at) VALUES
+            ('a1','https://a.example/1','T1','With Articles','2026-08-01T00:00:00Z'),
+            ('a2','https://a.example/2','T2','With Articles','2026-09-01T00:00:00Z');
+         PRAGMA user_version = 17;",
+    )
+    .unwrap();
+    db::migrate(&conn).unwrap();
+    // MAX(fetched_at) of that source's articles, not the older row, not now.
+    let f1: String = conn
+        .query_row(
+            "SELECT last_new_article_at FROM feed_sources WHERE id='f1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(f1, "2026-09-01T00:00:00Z");
+    // Never-productive sources get the migration moment (30-day grace).
+    let f2: String = conn
+        .query_row(
+            "SELECT last_new_article_at FROM feed_sources WHERE id='f2'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(!f2.is_empty());
+}
+
+#[test]
+fn prune_stale_feeds_retires_sources_and_protects_claimed_articles() {
+    let tmp = TmpDb::new("prune-stale");
+    let conn = tmp.conn();
+    let user_feed = db::subscribe_feed(
+        &conn,
+        "User Stale",
+        "tech",
+        "https://user-stale.example/rss",
+        "",
+    )
+    .unwrap();
+    let curated_feed = db::list_feeds(&conn)
+        .unwrap()
+        .into_iter()
+        .find(|f| f.origin == "curated" && f.id != user_feed.id)
+        .expect("seeded curated feed");
+    let fresh_feed = db::subscribe_feed(
+        &conn,
+        "Fresh Source",
+        "tech",
+        "https://fresh.example/rss",
+        "",
+    )
+    .unwrap();
+
+    // Both targets: enabled but no new article for 40 days.
+    let old = (chrono::Utc::now() - chrono::Duration::days(40)).to_rfc3339();
+    conn.execute(
+        "UPDATE feed_sources SET last_new_article_at=?1 WHERE id IN (?2, ?3)",
+        rusqlite::params![old, user_feed.id, curated_feed.id],
+    )
+    .unwrap();
+
+    // Articles of the user feed with every protection shape. Protection flags
+    // live in columns insert_article_if_new does not write, so they are
+    // stamped with direct UPDATEs after insert.
+    let mut unread = sample_article("stale-unread");
+    unread.source = user_feed.name.clone();
+    let mut liked = sample_article("stale-liked");
+    liked.source = user_feed.name.clone();
+    let mut reading = sample_article("stale-reading");
+    reading.source = user_feed.name.clone();
+    let mut finished = sample_article("stale-finished");
+    finished.source = user_feed.name.clone();
+    for a in [&unread, &liked, &reading, &finished] {
+        db::insert_article_if_new(&conn, a).unwrap();
+    }
+    conn.execute(
+        "UPDATE articles SET liked=1 WHERE id='stale-liked'",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE articles SET last_opened_at='2026-09-30T00:00:00Z' WHERE id='stale-reading'",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE articles SET last_opened_at='2026-09-30T00:00:00Z', read_completed=1 WHERE id='stale-finished'",
+        [],
+    )
+    .unwrap();
+
+    let pruned = db::prune_stale_feeds(&conn, 30).unwrap();
+    assert_eq!(pruned.len(), 2, "only the two aged feeds retire");
+
+    let feeds = db::list_feeds(&conn).unwrap();
+    // User feed: disabled, not deleted.
+    assert_eq!(
+        feeds
+            .iter()
+            .find(|f| f.id == user_feed.id)
+            .map(|f| f.enabled),
+        Some(false)
+    );
+    // Curated feed: gone, with a tombstone so seed won't resurrect it.
+    assert!(!feeds.iter().any(|f| f.id == curated_feed.id));
+    let tombstones: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM removed_feeds WHERE id=?1",
+            rusqlite::params![curated_feed.id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(tombstones, 1);
+    // Fresh feed untouched.
+    assert_eq!(
+        feeds
+            .iter()
+            .find(|f| f.id == fresh_feed.id)
+            .map(|f| f.enabled),
+        Some(true)
+    );
+
+    // Article protection: liked + in-progress stay; unread + finished go.
+    let remaining: std::collections::HashSet<String> = conn
+        .prepare("SELECT title FROM articles WHERE source=?1")
+        .unwrap()
+        .query_map(rusqlite::params![user_feed.name], |r| r.get::<_, String>(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert!(remaining.contains("stale-liked"));
+    assert!(remaining.contains("stale-reading"));
+    assert!(!remaining.contains("stale-unread"));
+    assert!(!remaining.contains("stale-finished"));
+}
+
+#[test]
+fn re_enabling_a_feed_restarts_the_stale_clock() {
+    let tmp = TmpDb::new("prune-reenable");
+    let conn = tmp.conn();
+    let feed = db::subscribe_feed(
+        &conn,
+        "Sleeper",
+        "tech",
+        "https://sleeper.example/rss",
+        "",
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE feed_sources SET last_new_article_at='2020-01-01T00:00:00Z' WHERE id=?1",
+        rusqlite::params![feed.id],
+    )
+    .unwrap();
+
+    // Disabling keeps the old clock (it is not an observation restart).
+    db::set_feed_enabled(&conn, &feed.id, false).unwrap();
+    let clock: Option<String> = conn
+        .query_row(
+            "SELECT last_new_article_at FROM feed_sources WHERE id=?1",
+            rusqlite::params![feed.id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(clock.as_deref(), Some("2020-01-01T00:00:00Z"));
+
+    // Re-enabling restarts it; the next prune must not retire the feed.
+    db::set_feed_enabled(&conn, &feed.id, true).unwrap();
+    let pruned = db::prune_stale_feeds(&conn, 30).unwrap();
+    assert!(!pruned.contains(&feed.name));
+}
+
+#[test]
+fn refresh_meta_moves_stale_clock_only_on_new_articles() {
+    let tmp = TmpDb::new("prune-clock");
+    let conn = tmp.conn();
+    let feed = db::subscribe_feed(
+        &conn,
+        "Clock Test",
+        "tech",
+        "https://clock.example/rss",
+        "",
+    )
+    .unwrap();
+    let now = chrono::Utc::now().to_rfc3339();
+    // Fetch without new articles: clock keeps ticking down (stays old).
+    db::set_feed_refresh_meta(&conn, &feed.id, None, &now, None, None).unwrap();
+    let after_fetch: Option<String> = conn
+        .query_row(
+            "SELECT last_new_article_at FROM feed_sources WHERE id=?1",
+            rusqlite::params![feed.id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(
+        after_fetch.unwrap() < now,
+        "fetch without new articles must not refresh the stale clock"
+    );
+    // A new article moves it.
+    db::set_feed_refresh_meta(&conn, &feed.id, None, &now, None, Some(&now)).unwrap();
+    let after_new: String = conn
+        .query_row(
+            "SELECT last_new_article_at FROM feed_sources WHERE id=?1",
+            rusqlite::params![feed.id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(after_new, now);
 }
 
 #[test]
@@ -1278,7 +1523,7 @@ fn v16_drops_saved_sentences_table() {
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 17);
+    assert_eq!(version, 18);
 }
 
 #[test]
@@ -1732,7 +1977,7 @@ fn schema_adds_summary_zh_column() {
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 17);
+    assert_eq!(version, 18);
     let memory_table: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_items'",

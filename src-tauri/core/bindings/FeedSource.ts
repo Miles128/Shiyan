@@ -17,6 +17,11 @@ fulltext_ratio: number,
 /**
  * User-assigned display priority for the sidebar source list. Higher =
  * surfaced earlier; 0 = never ordered (new feeds default here). Drives the
- * home ranking via a source-priority bonus (see `rank::Affinity`).
+ * home ranking via a source-priority bonus (see `src/rank.ts`).
  */
-priority: number, };
+priority: number, 
+/**
+ * 最近一次为该源新增文章的时间（RFC3339）。滚动窗口判沉寂的依据，
+ * 见 feeds::prune_stale_feeds；重新启用订阅时重置。
+ */
+last_new_article_at: string | null, };

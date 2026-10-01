@@ -35,12 +35,4 @@ describe("api facade", () => {
       }
     }
   });
-
-  it("invoke parameter keys use lowerCamelCase (Tauri 2 contract)", () => {
-    // Tauri's `#[tauri::command]` macro expects lowerCamelCase keys; snake_case
-    // silently maps to `None` for `Option<T>`. cursorScore / cursorId is the
-    // canonical example (cursor pagination regression).
-    const sample = { cursorScore: 1, cursorId: "a" };
-    expect(Object.keys(sample).join(",")).toBe("cursorScore,cursorId");
-  });
 });
