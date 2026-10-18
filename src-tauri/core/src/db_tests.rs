@@ -1149,43 +1149,23 @@ fn sample_vocab(id: &str, term: &str, created_at: &str) -> db::MemoryItem {
     }
 }
 
-/// v10 folds the legacy `vocab` and `phrases` tables into `memory_items`.
+/// Pre-collapse databases (user_version up to 19) must normalize on launch:
+/// the deprecated title_zh column is dropped and the counter lands on
+/// LATEST_VERSION — otherwise every future `stored < N` gate would be skipped
+/// forever behind the stale high counter.
 #[test]
-fn v10_migration_merges_vocab_and_phrases_into_memory_items() {
-    let tmp = TmpDb::new("v10-migrate");
+fn pre_collapse_database_is_normalized() {
+    let tmp = TmpDb::new("collapse-normalize");
     let conn = rusqlite::Connection::open(tmp.file()).unwrap();
+    // Minimal v19-shape database: the counter is what drives the gate, and
+    // title_zh is the one column v2 removes.
     conn.execute_batch(
-        "CREATE TABLE articles (id TEXT PRIMARY KEY);
-         CREATE TABLE feed_sources (
-            id TEXT PRIMARY KEY, name TEXT NOT NULL, category TEXT NOT NULL,
-            url TEXT NOT NULL UNIQUE, enabled INTEGER NOT NULL DEFAULT 1,
-            origin TEXT NOT NULL DEFAULT 'curated', description TEXT NOT NULL DEFAULT '',
-            etag TEXT NOT NULL DEFAULT '', last_fetched_at TEXT,
-            fulltext_ratio REAL NOT NULL DEFAULT -1
+        "CREATE TABLE articles (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            title_zh TEXT NOT NULL DEFAULT ''
          );
-         CREATE TABLE vocab (
-            id TEXT PRIMARY KEY, term TEXT NOT NULL, definition_zh TEXT NOT NULL,
-            word_type TEXT NOT NULL, collocations_json TEXT NOT NULL DEFAULT '[]',
-            context_sentence TEXT NOT NULL DEFAULT '', article_id TEXT,
-            status TEXT NOT NULL DEFAULT 'learning', interval_days REAL NOT NULL DEFAULT 0,
-            reps INTEGER NOT NULL DEFAULT 0, consecutive_know INTEGER NOT NULL DEFAULT 0,
-            next_review_at TEXT NOT NULL, created_at TEXT NOT NULL
-         );
-         CREATE TABLE phrases (
-            id TEXT PRIMARY KEY, phrase TEXT NOT NULL, meaning_zh TEXT NOT NULL DEFAULT '',
-            usage TEXT NOT NULL DEFAULT '', context_sentence TEXT NOT NULL DEFAULT '',
-            article_id TEXT, status TEXT NOT NULL DEFAULT 'learning',
-            interval_days REAL NOT NULL DEFAULT 0, reps INTEGER NOT NULL DEFAULT 0,
-            consecutive_know INTEGER NOT NULL DEFAULT 0, next_review_at TEXT NOT NULL,
-            created_at TEXT NOT NULL
-         );
-         INSERT INTO vocab VALUES
-            ('w1','Ubiquitous','无处不在的','adjective','[\"ubiquitous in\"]','It is ubiquitous.',
-             NULL,'learning',0,0,0,'2020-01-01T00:00:00Z','2020-01-01T00:00:00Z');
-         INSERT INTO phrases VALUES
-            ('p1','on the house','本店请客','collocation','It is on the house.',
-             NULL,'learning',0,0,0,'2020-01-01T00:00:00Z','2020-01-01T00:00:00Z');
-         PRAGMA user_version = 9;",
+         PRAGMA user_version = 19;",
     )
     .unwrap();
     db::migrate(&conn).unwrap();
@@ -1193,136 +1173,17 @@ fn v10_migration_merges_vocab_and_phrases_into_memory_items() {
     assert_eq!(
         conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        18
+        db::LATEST_VERSION,
+        "pre-collapse counter must normalize to the current version"
     );
-    let words = db::list_memory(&conn, Some("word"), None).unwrap();
-    let phrases = db::list_memory(&conn, Some("phrase"), None).unwrap();
-    assert_eq!(words.len(), 1);
-    assert_eq!(words[0].term, "Ubiquitous");
-    assert_eq!(words[0].collocations, vec!["ubiquitous in".to_string()]);
-    assert_eq!(phrases.len(), 1);
-    assert_eq!(phrases[0].term, "on the house");
-    assert_eq!(phrases[0].definition_zh, "本店请客");
-    assert_eq!(phrases[0].word_type, "collocation");
-    // Legacy tables are renamed, not dropped: rows stay recoverable.
-    let renamed: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('_legacy_vocab','_legacy_phrases')",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(renamed, 2, "legacy tables should be renamed, not dropped");
-    let legacy_phrases: i64 = conn
-        .query_row("SELECT COUNT(*) FROM _legacy_phrases", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(legacy_phrases, 1, "legacy phrase rows preserved");
-
-}
-
-#[test]
-fn migration_snapshot_is_written_before_version_bump() {
-    let tmp = TmpDb::new("premigrate");
-    let conn = rusqlite::Connection::open(tmp.file()).unwrap();
-    conn.pragma_update(None, "user_version", 5).unwrap();
-
-    db::backup_before_migration(&conn, &tmp.file());
-    let backup = tmp
-        .file()
-        .with_file_name("shiyan.db.premigrate-v5.bak");
-    assert!(backup.exists(), "pre-migration snapshot should exist");
-
-    // Already up to date → no new snapshot. A sibling folder keeps this file's
-    // own name, so the assertion below targets the real snapshot path.
-    let up_to_date = tmp.dir().join("uptodate");
-    std::fs::create_dir_all(&up_to_date).unwrap();
-    let current = up_to_date.join("shiyan.db");
-    let conn2 = rusqlite::Connection::open(&current).unwrap();
-    conn2.pragma_update(None, "user_version", 18).unwrap();
-    db::backup_before_migration(&conn2, &current);
-    assert!(!current
-        .with_file_name("shiyan.db.premigrate-v18.bak")
-        .exists());
-}
-
-#[test]
-fn v17_drops_tags_json_column() {
-    let tmp = TmpDb::new("v17");
-    let conn = tmp.conn();
-    // Fresh DBs migrate straight to v17: the v7 column must be gone.
     let has: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('articles') WHERE name='tags_json'",
+            "SELECT COUNT(*) FROM pragma_table_info('articles') WHERE name='title_zh'",
             [],
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(has, 0, "tags_json should be dropped by v17");
-    let version: i64 = conn
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(version, 18);
-}
-
-#[test]
-fn v18_adds_and_backfills_last_new_article_at() {
-    let tmp = TmpDb::new("v18");
-    let conn = tmp.conn();
-    // Fresh DB: column exists, every feed got a non-null clock (observation
-    // window starts now for sources that never produced an article).
-    let null_clocks: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM feed_sources WHERE last_new_article_at IS NULL",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(null_clocks, 0);
-    let version: i64 = conn
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(version, 18);
-}
-
-#[test]
-fn v18_backfills_clock_from_latest_article_per_source() {
-    let tmp = TmpDb::new("v18-backfill");
-    let conn = rusqlite::Connection::open(tmp.file()).unwrap();
-    // Minimal pre-v18 shape: only what the v18 gate touches.
-    conn.execute_batch(
-        "CREATE TABLE articles (id TEXT PRIMARY KEY, url TEXT NOT NULL UNIQUE, title TEXT NOT NULL,
-             source TEXT NOT NULL, fetched_at TEXT NOT NULL);
-         CREATE TABLE feed_sources (id TEXT PRIMARY KEY, name TEXT NOT NULL, category TEXT NOT NULL,
-             url TEXT NOT NULL UNIQUE, enabled INTEGER NOT NULL DEFAULT 1,
-             origin TEXT NOT NULL DEFAULT 'curated', description TEXT NOT NULL DEFAULT '');
-         INSERT INTO feed_sources (id, name, category, url) VALUES
-            ('f1','With Articles','tech','https://a.example/rss'),
-            ('f2','No Articles','tech','https://b.example/rss');
-         INSERT INTO articles (id, url, title, source, fetched_at) VALUES
-            ('a1','https://a.example/1','T1','With Articles','2026-08-01T00:00:00Z'),
-            ('a2','https://a.example/2','T2','With Articles','2026-09-01T00:00:00Z');
-         PRAGMA user_version = 17;",
-    )
-    .unwrap();
-    db::migrate(&conn).unwrap();
-    // MAX(fetched_at) of that source's articles, not the older row, not now.
-    let f1: String = conn
-        .query_row(
-            "SELECT last_new_article_at FROM feed_sources WHERE id='f1'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(f1, "2026-09-01T00:00:00Z");
-    // Never-productive sources get the migration moment (30-day grace).
-    let f2: String = conn
-        .query_row(
-            "SELECT last_new_article_at FROM feed_sources WHERE id='f2'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert!(!f2.is_empty());
+    assert_eq!(has, 0, "deprecated title_zh should be dropped by v2");
 }
 
 #[test]
@@ -1505,25 +1366,6 @@ fn refresh_meta_moves_stale_clock_only_on_new_articles() {
         )
         .unwrap();
     assert_eq!(after_new, now);
-}
-
-#[test]
-fn v16_drops_saved_sentences_table() {
-    let tmp = TmpDb::new("v16");
-    let conn = tmp.conn();
-    // Fresh DBs migrate straight to v16: the v15 table must be gone.
-    let has: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='saved_sentences'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(has, 0, "saved_sentences should be dropped by v16");
-    let version: i64 = conn
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(version, 18);
 }
 
 #[test]
@@ -1977,7 +1819,7 @@ fn schema_adds_summary_zh_column() {
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 18);
+    assert_eq!(version, db::LATEST_VERSION);
     let memory_table: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_items'",
@@ -2001,7 +1843,7 @@ fn schema_adds_summary_zh_column() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(tags_col, 0, "articles.tags_json should be dropped by v17");
+    assert_eq!(tags_col, 0, "articles.tags_json is not in the baseline schema");
     let quality_col: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM pragma_table_info('articles') WHERE name='quality'",
@@ -2254,4 +2096,146 @@ fn reorder_feeds_assigns_priority_within_category() {
     assert_eq!(name_prio.get("t1"), Some(&2));
     assert_eq!(name_prio.get("f1"), Some(&2));
 
+}
+
+/// v19 contract: a book is a feed with kind='book'; its chapters are ordinary
+/// articles carrying `chapter_no`. Everything the rest of the app relies on is
+/// asserted here — chapter ordering, chapter navigation, the card backfill
+/// exclusion, stale-feed pruning and delete-cascades.
+#[test]
+fn v19_book_feed_and_chapters_behave_like_subscriptions() {
+    let tmp = TmpDb::new("v19-books");
+    let conn = tmp.conn();
+
+    let chapter_col: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('articles') WHERE name='chapter_no'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(chapter_col, 1, "articles.chapter_no should exist");
+    let catalog_table: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='book_catalog'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(catalog_table, 1, "book_catalog should exist");
+
+    let feed = db::insert_book_feed(
+        &conn,
+        "Moby Dick; Or, The Whale",
+        "https://www.gutenberg.org/ebooks/2701",
+        "Herman Melville · 1851",
+    )
+    .unwrap();
+    assert_eq!(feed.kind, "book");
+    assert_eq!(feed.category, "book");
+    assert_eq!(feed.origin, "user");
+    // Idempotent by url: importing twice must not create a second feed.
+    let again = db::insert_book_feed(
+        &conn,
+        "Moby Dick; Or, The Whale",
+        "https://www.gutenberg.org/ebooks/2701",
+        "Herman Melville · 1851",
+    )
+    .unwrap();
+    assert_eq!(again.id, feed.id);
+
+    // Reversed insertion order (3, 1, 2): chapter order must come from
+    // chapter_no, not from the insert order or the uuid. `ids` is therefore
+    // not in chapter order — index by chapter number below.
+    let mut ids = Vec::new();
+    for no in [3, 1, 2] {
+        let mut article = sample_article(&format!("ch{no}"));
+        article.url = format!("https://www.gutenberg.org/ebooks/2701#ch-{no}");
+        article.source = feed.name.clone();
+        article.category = "book".into();
+        article.origin = "book".into();
+        article.title = format!("Chapter {no}");
+        article.fetched_at = "2026-01-01T00:00:00Z".into();
+        article.summary_zh = String::new();
+        db::insert_book_chapter(&conn, &article, no).unwrap();
+        ids.push(article.id);
+    }
+    let (ch1, ch2, ch3) = (ids[1].as_str(), ids[2].as_str(), ids[0].as_str());
+
+    let listed = db::query_articles(
+        &conn,
+        &db::ArticleQuery {
+            source: Some(feed.name.as_str()),
+            ..Default::default()
+        },
+        Some(10),
+        Some(0),
+    )
+    .unwrap();
+    let titles: Vec<String> = listed.iter().map(|a| a.title.clone()).collect();
+    assert_eq!(titles, vec!["Chapter 1", "Chapter 2", "Chapter 3"]);
+
+    let pos = db::book_chapter_position(&conn, ch3)
+        .expect("position query")
+        .expect("ch3 is a chapter");
+    assert_eq!(pos.chapter_no, 3);
+    assert_eq!(pos.chapter_count, 3);
+    assert_eq!(pos.next_id, None, "last chapter has no next");
+    assert_eq!(pos.prev_id.as_deref(), Some(ch2), "ch3 follows ch2");
+    let mid = db::book_chapter_position(&conn, ch2)
+        .expect("position query")
+        .expect("ch2 is a chapter");
+    assert_eq!(mid.prev_id.as_deref(), Some(ch1));
+    assert_eq!(mid.next_id.as_deref(), Some(ch3));
+    let plain = sample_article("plain");
+    db::insert_article_if_new(&conn, &plain).unwrap();
+    assert!(
+        db::book_chapter_position(&conn, "plain").unwrap().is_none(),
+        "non-chapter rows have no book position"
+    );
+
+    // A book must never queue LLM blurbs: 135 chapters would eat the whole
+    // backfill budget for months.
+    let missing = db::articles_missing_card_zh(&conn, 50).unwrap();
+    assert!(
+        missing.iter().all(|a| a.origin != "book"),
+        "book chapters must be excluded from the card backfill"
+    );
+
+    // The rolling stale-feed prune must not disable a book: it never produces
+    // new articles after import.
+    conn.execute(
+        "UPDATE feed_sources SET last_new_article_at='2020-01-01T00:00:00Z' WHERE id=?1",
+        rusqlite::params![feed.id],
+    )
+    .unwrap();
+    let pruned = db::prune_stale_feeds(&conn, 30).unwrap();
+    assert!(
+        !pruned.iter().any(|n| n == &feed.name),
+        "book feeds are exempt from stale pruning, pruned: {pruned:?}"
+    );
+    let still_enabled: i64 = conn
+        .query_row(
+            "SELECT enabled FROM feed_sources WHERE id=?1",
+            rusqlite::params![feed.id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(still_enabled, 1);
+
+    // Deleting the book removes its chapters instead of orphaning them.
+    db::delete_user_feed(&conn, &feed.id).unwrap();
+    let leftovers: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM articles WHERE origin='book'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(leftovers, 0);
+
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, db::LATEST_VERSION);
 }

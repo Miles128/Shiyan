@@ -30,12 +30,17 @@ export function articleLengthLabel(wordCount: number): string {
 
 /** Max picks per category, so one busy section can't fill the whole row. */
 const PER_CATEGORY_CAP = 3;
+/** Max picks per book. One imported book is one "source" with up to hundreds
+ *  of chapter articles, all sharing a category — the per-category cap alone
+ *  would let the backfill below hand it the rest of the digest. */
+const PER_BOOK_CAP = 3;
 
 /**
  * "今日推荐": top unread articles, spread across categories.
  * The backend ranks by interest; taking a raw prefix let the largest
  * category (world) dominate, so picks are capped per category first and
- * backfilled from the remaining ranked order.
+ * backfilled from the remaining ranked order. Book chapters get an extra
+ * per-source cap: a 135-chapter novel is 135 articles from one source.
  */
 export function pickTopArticles(
   articles: ArticleListItem[],
@@ -45,19 +50,30 @@ export function pickTopArticles(
   const picks: ArticleListItem[] = [];
   const used = new Set<string>();
   const counts = new Map<string, number>();
+  const bookCounts = new Map<string, number>();
+  const bookAllowed = (a: ArticleListItem) =>
+    a.category !== "book" || (bookCounts.get(a.source) ?? 0) < PER_BOOK_CAP;
 
   for (const a of unread) {
     if ((counts.get(a.category) ?? 0) >= PER_CATEGORY_CAP) continue;
+    if (!bookAllowed(a)) continue;
     picks.push(a);
     used.add(a.id);
     counts.set(a.category, (counts.get(a.category) ?? 0) + 1);
+    if (a.category === "book") {
+      bookCounts.set(a.source, (bookCounts.get(a.source) ?? 0) + 1);
+    }
     if (picks.length >= max) return picks;
   }
 
   // Fewer categories than the cap allows: fill from the rest of the order.
   for (const a of unread) {
     if (used.has(a.id)) continue;
+    if (!bookAllowed(a)) continue;
     picks.push(a);
+    if (a.category === "book") {
+      bookCounts.set(a.source, (bookCounts.get(a.source) ?? 0) + 1);
+    }
     if (picks.length >= max) break;
   }
   return picks;

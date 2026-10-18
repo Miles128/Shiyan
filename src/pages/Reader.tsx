@@ -9,7 +9,7 @@ import {
 } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
-import { api, type FeedCategory, type TranslateProgress } from "../api";
+import { api, type BookContext, type FeedCategory, type TranslateProgress } from "../api";
 import { invalidateQueries } from "../query";
 import {
   readingCssVars,
@@ -21,10 +21,20 @@ import { bundledGloss, rememberTranslation } from "../wordResolve";
 import WordPopoverShell from "../components/WordPopoverShell";
 import ReaderTypePanel from "../components/ReaderTypePanel";
 import ReaderParagraph from "../components/ReaderParagraph";
+import {
+  IconBack,
+  IconEyeOff,
+  IconStar,
+  IconStarFilled,
+  IconStop,
+  IconTranslate,
+  IconVolume,
+} from "../components/icons";
 import { useEscapeKey } from "../useEscapeKey";
+import { useReadingSession } from "../useReadingSession";
 import { useAppConfig, useVocab } from "../store";
 import { useToast } from "../components/Toaster";
-import { loadScroll, rememberLastArticle, saveScroll, useArticle } from "../useArticle";
+import { rememberLastArticle, useArticle } from "../useArticle";
 import { useTts } from "../useTts";
 import { useWordPopover } from "../useWordPopover";
 import {
@@ -52,70 +62,51 @@ function paraKey(id: string | undefined, index: number, text: string): string {
   return `${id ?? "noid"}:${index}:${h.toString(36)}`;
 }
 
-function IconBack() {
+/**
+ * Chapter navigation for book chapters. Chapters are ordinary articles (a book
+ * is a feed), so without this bar a 135-chapter book is a dead end: there is no
+ * list context inside the reader. Rendered twice — under the title and again
+ * after the last paragraph — because a long chapter ends far below the header.
+ */
+function ChapterBar({
+  book,
+  onOpen,
+  footer = false,
+}: {
+  book: BookContext;
+  onOpen: (id: string) => void;
+  footer?: boolean;
+}) {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M19 12H5" />
-      <path d="m12 19-7-7 7-7" />
-    </svg>
-  );
-}
-
-function IconStar() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26" />
-    </svg>
-  );
-}
-
-function IconStarFilled() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26" />
-    </svg>
-  );
-}
-
-function IconVolume() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M11 5 6 9H2v6h4l5 4z" />
-      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-    </svg>
-  );
-}
-
-function IconStop() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <rect x="6" y="6" width="12" height="12" rx="2" />
-    </svg>
-  );
-}
-
-function IconTranslate() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="m5 8 6 6" />
-      <path d="m4 14 6-6 2-3" />
-      <path d="M2 5h12" />
-      <path d="M7 2h1" />
-      <path d="m22 22-5-10-5 10" />
-      <path d="M14 18h6" />
-    </svg>
-  );
-}
-
-function IconEyeOff() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
-      <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
-      <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
-      <line x1="2" x2="22" y1="2" y2="22" />
-    </svg>
+    <nav
+      className={`chapter-bar${footer ? " chapter-bar-footer" : ""}`}
+      aria-label="章节导航"
+    >
+      <span className="chapter-bar-title" title={book.title}>
+        {book.title}
+      </span>
+      <span className="muted chapter-bar-count">
+        第 {book.chapter_no} / {book.chapter_count} 章
+      </span>
+      <span className="chapter-bar-actions">
+        <button
+          type="button"
+          className="btn small"
+          disabled={!book.prev_id}
+          onClick={() => book.prev_id && onOpen(book.prev_id)}
+        >
+          上一章
+        </button>
+        <button
+          type="button"
+          className="btn small"
+          disabled={!book.next_id}
+          onClick={() => book.next_id && onOpen(book.next_id)}
+        >
+          下一章
+        </button>
+      </span>
+    </nav>
   );
 }
 
@@ -127,6 +118,7 @@ export default function Reader() {
     paragraphs,
     translations,
     setTranslations,
+    book,
     error,
     setError,
     view,
@@ -145,10 +137,6 @@ export default function Reader() {
   const typeBtnRef = useRef<HTMLButtonElement | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const clickGuardRef = useRef(false);
-  const readCompletedRef = useRef(false);
-  /** Accumulated visible+focused dwell, feeds stats and interest ranking. */
-  const dwellMsRef = useRef(0);
-  const atBottomRef = useRef(false);
 
   const tts = useTts();
   const wordToast = useToast();
@@ -243,23 +231,6 @@ export default function Reader() {
   const title = useMemo(() => article?.title ?? "阅读", [article]);
   const liked = likedOverride ?? article?.liked ?? false;
 
-  /** Finish = reached the bottom. Dwell still accrues for stats/ranking,
-   *  but it no longer gates the read flag — the old words/200-minutes
-   *  threshold meant fast readers never got marked 已读 at all. */
-  const tryComplete = useCallback(() => {
-    if (!id || readCompletedRef.current) return;
-    if (!atBottomRef.current) return;
-    readCompletedRef.current = true;
-    setShowDone(true);
-    // Read-state feeds the Home filters: bust the list window so back-nav
-    // paints fresh instead of a stale row that the revalidate then yanks.
-    // (Dwell-only flushes below skip this — churn, and they self-heal.)
-    void api
-      .markArticleProgress(id, 0, true)
-      .then(() => invalidateQueries(["articles"]))
-      .catch(() => undefined);
-  }, [id]);
-
   // 读完提示播完即撤；切文章时清掉，避免把上一篇的残影带过来。
   useEffect(() => {
     if (!showDone) return;
@@ -267,102 +238,29 @@ export default function Reader() {
     return () => window.clearTimeout(t);
   }, [showDone]);
 
-  // Reading-time tracking: flush while the window is visible AND focused,
-  // on losing focus/hiding, and on unmount. Capped per flush so sleep/resume
-  // can't inflate it.
+  // Dwell tracking, read-to-the-end detection and scroll memory live in the
+  // session hook; the reader only supplies the completion toast.
+  useReadingSession({
+    id,
+    view,
+    onComplete: () => setShowDone(true),
+  });
+
+  // Reset per-article UI state (like/translation visibility) when navigating.
   useEffect(() => {
     if (!id) return;
-    dwellMsRef.current = 0;
-    atBottomRef.current = false;
-    let flushedAt = Date.now();
-    const flush = () => {
-      const now = Date.now();
-      const delta = Math.min(now - flushedAt, 60_000);
-      flushedAt = now;
-      if (delta >= 1000) {
-        dwellMsRef.current += delta;
-        void api
-          .markArticleProgress(id, delta, readCompletedRef.current)
-          .catch(() => undefined);
-        tryComplete();
-      }
-    };
-    const isCounting = () => !document.hidden && document.hasFocus();
-    const flushIfCounting = () => {
-      if (isCounting()) flush();
-    };
-    const flushIfNotCounting = () => {
-      if (!isCounting()) flush();
-    };
-    const timer = window.setInterval(flushIfCounting, 15_000);
-    document.addEventListener("visibilitychange", flushIfNotCounting);
-    window.addEventListener("blur", flushIfNotCounting);
-    const onFocus = () => {
-      flushedAt = Date.now();
-    };
-    window.addEventListener("focus", onFocus);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", flushIfNotCounting);
-      window.removeEventListener("blur", flushIfNotCounting);
-      window.removeEventListener("focus", onFocus);
-      if (!document.hidden && document.hasFocus()) flush();
-    };
-  }, [id, tryComplete]);
+    setLikedOverride(null);
+    setShowDone(false);
+    setShowFullZh(false);
+    setVisibleParas({});
+    setBusyPara(null);
+    setFullProgress(null);
+  }, [id]);
 
   // Remember the article so other pages can offer "continue reading".
   useEffect(() => {
     if (id) rememberLastArticle(id);
   }, [id]);
-
-  // Restore the previous scroll offset once the body is on screen.
-  const restoredRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!id || view !== "ready" || restoredRef.current === id) return;
-    restoredRef.current = id;
-    const y = loadScroll(id);
-    if (y && y > 0) {
-      requestAnimationFrame(() => window.scrollTo({ top: y, behavior: "auto" }));
-    }
-  }, [id, view]);
-
-  // Read-to-the-end detection + scroll memory.
-  useEffect(() => {
-    if (!id) return;
-    readCompletedRef.current = false;
-    atBottomRef.current = false;
-    setLikedOverride(null);
-    setShowDone(false);
-    // Reset translation-visibility state when navigating to a different article.
-    setShowFullZh(false);
-    setVisibleParas({});
-    setBusyPara(null);
-    setFullProgress(null);
-    // Gate detection on the body being on screen. While the article is still
-    // loading the document is short, so `scrollHeight - 400` is already under
-    // the fold: an ungated check self-completes on mount, latches, and marks
-    // every opened article read (and fires the toast invisibly) before it is
-    // actually read. Re-runs when `view` flips to ready, which re-arms it.
-    if (view !== "ready") return;
-    let lastSaved = 0;
-    const onScroll = () => {
-      const now = Date.now();
-      if (now - lastSaved > 500) {
-        lastSaved = now;
-        saveScroll(id, window.scrollY);
-      }
-      const doc = document.documentElement;
-      atBottomRef.current =
-        window.innerHeight + window.scrollY >= doc.scrollHeight - 400;
-      if (atBottomRef.current) tryComplete();
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    onScroll();
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-      saveScroll(id, window.scrollY);
-    };
-  }, [id, tryComplete, view]);
 
   function toggleLiked() {
     if (!id) return;
@@ -377,9 +275,11 @@ export default function Reader() {
 
   const asMarkdown = useMemo(() => {
     if (!article) return false;
-    const body = paragraphs.length > 0 ? paragraphs.join("\n\n") : article.content_text;
-    return shouldRenderMarkdown(article.url, body);
-  }, [article, paragraphs]);
+    // Detection reads the stored body, not `paragraphs`: reflow strips web
+    // links out of paragraphs, and an inline link is one of the Markdown
+    // signals — judging on paragraphs would drop articles back to plain text.
+    return shouldRenderMarkdown(article.url, article.content_text);
+  }, [article]);
 
   function speakArticle() {
     if (speaking && speakTarget?.kind === "article") {
@@ -662,6 +562,9 @@ export default function Reader() {
             )}
           </div>
         </div>
+        {book && (
+          <ChapterBar book={book} onOpen={(next) => navigate(`/article/${next}`)} />
+        )}
         <div className="reader-heading">
           {article.summary_zh && (
             <p className="article-summary-zh">{article.summary_zh}</p>
@@ -690,6 +593,14 @@ export default function Reader() {
           />
         ))}
       </article>
+
+      {book && (
+        <ChapterBar
+          book={book}
+          onOpen={(next) => navigate(`/article/${next}`)}
+          footer
+        />
+      )}
 
       <p className="muted source-link">
         原文：{" "}

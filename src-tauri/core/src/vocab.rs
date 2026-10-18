@@ -189,7 +189,7 @@ pub const CARD_SUMMARY_MAX_CHARS: usize = 60;
 const CARD_EXCERPT_CHARS: usize = 200;
 
 /// Truncate to at most `max_chars` Unicode scalars, then trim.
-pub fn clip_zh(s: &str, max_chars: usize) -> String {
+fn clip_zh(s: &str, max_chars: usize) -> String {
     s.chars().take(max_chars).collect::<String>().trim().to_string()
 }
 

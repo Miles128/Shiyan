@@ -5,14 +5,15 @@
 //! and maps errors out. `lib.rs` registers the full handler list.
 
 pub mod articles;
+pub mod books;
 pub mod config;
 pub mod data;
 pub mod feeds;
 pub mod known;
 pub mod memory;
 
-use crate::db::DbState;
-use crate::error::AppError;
+use shiyan_core::db::DbState;
+use shiyan_core::error::AppError;
 use tauri::{AppHandle, Manager};
 
 /// True while a `refresh_feeds` run holds the refresh guard. `backup_database`
@@ -30,7 +31,7 @@ where
     T: Send + 'static,
     F: FnOnce(&DbState) -> Result<T, AppError> + Send + 'static,
 {
-    crate::error::flatten_blocking(
+    shiyan_core::error::flatten_blocking(
         tauri::async_runtime::spawn_blocking(move || {
             let state = app
                 .try_state::<DbState>()
@@ -47,7 +48,7 @@ where
     T: Send + 'static,
     F: FnOnce() -> Result<T, AppError> + Send + 'static,
 {
-    crate::error::flatten_blocking(tauri::async_runtime::spawn_blocking(f).await)
+    shiyan_core::error::flatten_blocking(tauri::async_runtime::spawn_blocking(f).await)
 }
 
 #[cfg(test)]

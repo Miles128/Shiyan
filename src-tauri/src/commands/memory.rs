@@ -1,7 +1,7 @@
-use crate::db::{self, DbState, LookupEntry, MemoryItem};
-use crate::error::AppError;
-use crate::srs::{apply_rating, Rating};
-use crate::vocab::{self, AddMemoryInput};
+use shiyan_core::db::{self, DbState, LookupEntry, MemoryItem};
+use shiyan_core::error::AppError;
+use shiyan_core::srs::{apply_rating, Rating};
+use shiyan_core::vocab::{self, AddMemoryInput};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
 
@@ -17,7 +17,7 @@ use tauri_plugin_dialog::DialogExt;
 /// (not a raw OS thread per save) so rapid saves can't spawn unbounded threads.
 fn enrich_memory_background(app: AppHandle, item: MemoryItem) {
     tauri::async_runtime::spawn_blocking(move || {
-        let Ok(cfg) = crate::config::load_config() else {
+        let Ok(cfg) = shiyan_core::config::load_config() else {
             return;
         };
         let Some(enrichment) = vocab::enrich_memory_fields(&cfg, &item) else {

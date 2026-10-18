@@ -17,6 +17,7 @@ function item(
   opts: {
     opened?: boolean;
     category?: string;
+    source?: string;
     rankScore?: number;
   } = {},
 ): ArticleListItem {
@@ -24,7 +25,7 @@ function item(
     id,
     url: `https://example.com/${id}`,
     title: id,
-    source: "S",
+    source: opts.source ?? "S",
     category: opts.category ?? "tech",
     published_at: null,
     excerpt: "",
@@ -118,6 +119,21 @@ describe("pickTopArticles", () => {
     // world is capped at 3, so the rest of the row comes from other sections.
     expect(picks.filter((id) => id.startsWith("w"))).toHaveLength(3);
     expect(picks.some((id) => !id.startsWith("w"))).toBe(true);
+  });
+
+  it("caps chapters per book so one imported novel can't own the digest", () => {
+    // 20 chapters from one book, nothing else: the category cap alone would
+    // still fill the whole row from the backfill pass.
+    const chapters = Array.from({ length: 20 }, (_, i) =>
+      item(`c${i}`, { category: "book", source: "Moby Dick" }),
+    );
+    const picks = pickTopArticles(chapters, 10);
+    expect(picks).toHaveLength(3);
+    // A second book still gets its own allowance.
+    const two = [...chapters, item("d0", { category: "book", source: "Middlemarch" })];
+    const withTwo = pickTopArticles(two, 10);
+    expect(withTwo.filter((a) => a.source === "Moby Dick")).toHaveLength(3);
+    expect(withTwo.some((a) => a.source === "Middlemarch")).toBe(true);
   });
 });
 

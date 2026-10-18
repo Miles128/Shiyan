@@ -19,7 +19,7 @@ import {
   difficultyLabel,
   type DifficultyLevel,
 } from "../difficulty";
-import { useAppConfig, useSearchQuery, useShell, useVocab } from "../store";
+import { useAppConfig, useFeeds, useFilters, useSearchQuery, useVocab } from "../store";
 import { useToast } from "../components/Toaster";
 import { emitEvent, onEvent } from "../events";
 import {
@@ -67,12 +67,8 @@ export default function Home() {
   const [loadingMore, setLoadingMore] = useState(false);
   const navigate = useNavigate();
   const { cfg } = useAppConfig();
-  const {
-    rerankNonce,
-    filtersOpen,
-    focusSource,
-    setFocusSource,
-  } = useShell();
+  const { rerankNonce } = useFeeds();
+  const { filtersOpen, focusSource, setFocusSource } = useFilters();
   const { query, setQuery } = useSearchQuery();
   // Debounced server-side search: the backend filters title/blurb/source so
   // searching reaches past the loaded window. 300ms keeps keystrokes smooth.

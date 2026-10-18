@@ -16,6 +16,7 @@
 //! 9. Structural junk from HTML→text is removed first (see [`clean_body`]):
 //!    the trailing link-reference definition block, inline `[text][n]` markers
 //!    (rewritten into normal links), and short page-chrome paragraphs.
+//! 10. Web links are dropped, keeping their words (see [`strip_links`]).
 //!
 //! Word forms, casing and spelling are never altered — the text stays faithful
 //! for lookup and vocabulary review.
@@ -28,7 +29,7 @@ use std::sync::LazyLock;
 /// text splits into paragraphs: the startup cleanup keys its one-time marker
 /// off this version, so stale index-keyed paragraph translations are cleared
 /// again instead of rendering against the wrong paragraphs.
-pub const REFLOW_VERSION: u32 = 3;
+pub const REFLOW_VERSION: u32 = 4;
 
 /// A paragraph this short or shorter is a candidate for chrome removal. Longer
 /// prose is always kept, even when it mentions subscribing.
@@ -129,6 +130,86 @@ pub fn clean_body(text: &str) -> String {
     blocks.join("\n\n")
 }
 
+/// Trailing characters that belong to the sentence around a bare address
+/// rather than to the address itself: "at https://example.com/a." keeps the
+/// period, the address does not.
+const URL_TAIL_PUNCT: &[char] = &[
+    '.', ',', ';', ':', '!', '?', '\'', '"', '\u{2019}', '\u{201d}', '*', '_', '~',
+];
+
+/// Inline link or image target: the URL, allowing one level of nested parens
+/// (`/wiki/Foo_(bar)`). The regex crate has no look-around, so images are
+/// matched first — otherwise `[alt](url)` would match and leave a stray `!`.
+const LINK_TARGET: &str = r"(?:[^()\s]|\([^()]*\))*";
+
+static RE_INLINE_IMAGE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(&format!(r"!\[([^\]]*)\]\({LINK_TARGET}\)")).unwrap());
+static RE_INLINE_LINK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(&format!(r"\[([^\]]*)\]\({LINK_TARGET}\)")).unwrap());
+static RE_BARE_URL: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)<?(?:https?://|ftp://|mailto:|www\.)[^\s<>]+>?").unwrap()
+});
+static RE_EMPTY_BRACKETS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[\(\[\{][ \t]*[\)\]\}]").unwrap());
+static RE_TRAILING_SPACE_BRACKET: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[\(\[\{][ \t]+([\)\]\}])").unwrap());
+
+/// Drop web links from body text, keeping the words a reader actually reads.
+///
+/// Inline links (`[label](https://…)`) collapse to their label, images to
+/// their alt text, and bare addresses (`https://…`, `www.…`) disappear — the
+/// reader is a reading surface, not a browser, so a paragraph should read as
+/// prose instead of link markup.
+///
+/// Display-time only (from [`reflow`]), never at ingest: the stored
+/// `content_text` keeps its links so the link-density gates in
+/// `feeds::filters` can still recognise a link dump, and imported Markdown
+/// files keep the syntax their author wrote. Idempotent, like [`clean_body`].
+pub fn strip_links(text: &str) -> String {
+    let mut s = RE_INLINE_IMAGE
+        .replace_all(text, |c: &regex::Captures| c[1].to_string())
+        .into_owned();
+    s = RE_INLINE_LINK
+        .replace_all(&s, |c: &regex::Captures| c[1].to_string())
+        .into_owned();
+    s = RE_BARE_URL
+        .replace_all(&s, |c: &regex::Captures| split_url(&c[0]).1)
+        .into_owned();
+    // Removing an address can leave the brackets or double spaces it sat in.
+    s = RE_EMPTY_BRACKETS.replace_all(&s, "").into_owned();
+    s = RE_TRAILING_SPACE_BRACKET.replace_all(&s, "$1").into_owned();
+    s = RE_SPACE_RUN.replace_all(&s, " ").into_owned();
+    s = RE_SPACE_BEFORE_PUNCT.replace_all(&s, "$1").into_owned();
+    s
+}
+
+/// Split a matched address into the address itself and the sentence
+/// punctuation the prose wrapped around it — that punctuation stays, the
+/// address goes: "at https://example.com/a." leaves the period behind.
+///
+/// A closing bracket only leaves with the address when the address never
+/// opened it: `(see https://example.com)` keeps its bracket, while
+/// `/wiki/Foo_(bar)` keeps the pair inside the address.
+fn split_url(raw: &str) -> (&str, String) {
+    let body = raw.strip_prefix('<').unwrap_or(raw);
+    let body = body.strip_suffix('>').unwrap_or(body);
+    let mut end = body.len();
+    while end > 0 {
+        let last = body[..end].chars().next_back().unwrap();
+        let unbalanced = match last {
+            ')' => body[..end].matches(')').count() > body[..end].matches('(').count(),
+            ']' => body[..end].matches(']').count() > body[..end].matches('[').count(),
+            '}' => body[..end].matches('}').count() > body[..end].matches('{').count(),
+            _ => false,
+        };
+        if !URL_TAIL_PUNCT.contains(&last) && !unbalanced {
+            break;
+        }
+        end -= last.len_utf8();
+    }
+    (&body[..end], body[end..].to_string())
+}
+
 static RE_HYPHEN_BREAK: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"([A-Za-z])-[ \t]*\n[ \t]*([a-z])").unwrap());
 /// Left-hand words of hyphenated compounds ("well-known", "part-time"): a
@@ -176,6 +257,7 @@ const TOKEN_SUFFIX: &[&str] = &[
 pub fn reflow(text: &str) -> Vec<String> {
     let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
     let normalized = clean_body(&normalized);
+    let normalized = strip_links(&normalized);
     let joined = rejoin_hyphen_breaks(&normalized);
 
     let mut paragraphs: Vec<String> = Vec::new();
@@ -656,5 +738,66 @@ mod tests {
             "The court ruled on Friday.\n\n[1]: https://example.com/ruling\n[2]: https://example.com/x",
         );
         assert_eq!(parts, vec!["The court ruled on Friday."]);
+    }
+
+    #[test]
+    fn inline_links_keep_their_words_and_lose_their_target() {
+        assert_eq!(
+            reflow("By [Ethan Kessler](https://example.com/ethan) on Sunday."),
+            vec!["By Ethan Kessler on Sunday."]
+        );
+        assert_eq!(
+            reflow("See the [full report](https://example.com/a/b_(c)?id=1) for more."),
+            vec!["See the full report for more."]
+        );
+    }
+
+    #[test]
+    fn bare_addresses_go_and_leave_the_sentence_intact() {
+        assert_eq!(
+            reflow("Details at https://example.com/a/b."),
+            vec!["Details at."]
+        );
+        assert_eq!(
+            reflow("Read (see https://example.com/x) now."),
+            vec!["Read (see) now."]
+        );
+        assert_eq!(
+            reflow("Follow www.example.com for news."),
+            vec!["Follow for news."]
+        );
+    }
+
+    #[test]
+    fn images_collapse_to_their_alt_text() {
+        assert_eq!(
+            reflow("A ![map of the route](https://example.com/map.png) here."),
+            vec!["A map of the route here."]
+        );
+        // No alt text: the markup goes, the sentence closes up.
+        assert_eq!(
+            reflow("A ![](https://example.com/map.png) here."),
+            vec!["A here."]
+        );
+    }
+
+    #[test]
+    fn link_only_paragraphs_disappear() {
+        let parts = reflow("The vote was close.\n\n[More coverage](https://example.com/x)");
+        assert_eq!(parts, vec!["The vote was close."]);
+    }
+
+    #[test]
+    fn stripping_links_keeps_plain_domains_and_is_idempotent() {
+        // A bare domain with no scheme reads as prose, not as a link.
+        assert_eq!(
+            strip_links("Filed at example.com on Monday."),
+            "Filed at example.com on Monday."
+        );
+        let body = "By [Ethan Kessler](https://example.com/ethan), filed at \
+                    https://example.com/a, on Sunday.";
+        let once = strip_links(body);
+        assert_eq!(once, "By Ethan Kessler, filed at, on Sunday.");
+        assert_eq!(strip_links(&once), once, "second pass must change nothing");
     }
 }

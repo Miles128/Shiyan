@@ -24,4 +24,9 @@ priority: number,
  * 最近一次为该源新增文章的时间（RFC3339）。滚动窗口判沉寂的依据，
  * 见 feeds::prune_stale_feeds；重新启用订阅时重置。
  */
-last_new_article_at: string | null, };
+last_new_article_at: string | null, 
+/**
+ * 'rss' = 抓 RSS 的订阅源；'book' = 书籍（一本书就是一个源，章节是文章）。
+ * 刷新流程与沉寂清理都跳过 book，见 feeds::pipeline::select_enabled_feeds。
+ */
+kind: string, };

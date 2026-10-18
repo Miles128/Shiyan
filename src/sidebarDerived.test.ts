@@ -18,6 +18,7 @@ function feed(
     url: `https://example.com/${id}`,
     enabled: opts.enabled ?? true,
     origin: opts.origin ?? "curated",
+    kind: "rss",
     description: "",
     etag: "",
     last_fetched_at: null,
@@ -82,6 +83,19 @@ describe("groupSidebarFeeds", () => {
     );
     expect(groups.map((g) => g.cat)).toEqual(["tech", "world", "custom"]);
     expect(groups[2].label).toBe("自订");
+  });
+
+  it("keeps a book shelf above 其他", () => {
+    const groups = groupSidebarFeeds(
+      [
+        feed("o", { category: "other", name: "O" }),
+        feed("b", { category: "book", name: "B", origin: "user" }),
+      ],
+      [{ id: "book", label: "书籍" }],
+      { O: 1, B: 1 },
+    );
+    expect(groups.map((g) => g.cat)).toEqual(["book", "other"]);
+    expect(groups[0].label).toBe("书籍");
   });
 
   it("keeps input order for equal counts (drag priority survives ties)", () => {

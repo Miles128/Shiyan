@@ -9,6 +9,9 @@ export const BUILTIN_CATEGORY_ORDER: { id: string; label: string }[] = [
   { id: "tech", label: "科技" },
   { id: "finance", label: "财经" },
   { id: "world", label: "国际" },
+  // Books are a category of their own (one source per title) and sit above
+  // 其他 so imported titles are not buried under user-created groups.
+  { id: "book", label: "书籍" },
   { id: "other", label: "其他" },
 ];
 

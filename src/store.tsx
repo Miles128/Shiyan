@@ -122,13 +122,11 @@ type VocabState = {
 
 const VocabContext = createContext<VocabState | null>(null);
 
-type LearningState = Pick<VocabState, "learningTerms" | "refreshLearningTerms">;
 type KnownState = Pick<
   VocabState,
   "knownTerms" | "refreshKnownTerms" | "markKnown" | "unmarkKnown"
 >;
 
-const LearningContext = createContext<LearningState | null>(null);
 const KnownContext = createContext<KnownState | null>(null);
 
 export function VocabProvider({ children }: { children: ReactNode }) {
@@ -184,23 +182,17 @@ export function VocabProvider({ children }: { children: ReactNode }) {
     }),
     [learningTerms, refreshLearningTerms, knownTerms, refreshKnownTerms, markKnown, unmarkKnown],
   );
-  // Split values so learning-only consumers don't re-render on known changes
-  // and vice versa. `VocabContext` stays for existing `useVocab` callers.
-  const learningValue = useMemo(
-    () => ({ learningTerms, refreshLearningTerms }),
-    [learningTerms, refreshLearningTerms],
-  );
+  // Split values so known-only consumers don't re-render on learning changes.
+  // `VocabContext` stays for existing `useVocab` callers.
   const knownValue = useMemo(
     () => ({ knownTerms, refreshKnownTerms, markKnown, unmarkKnown }),
     [knownTerms, refreshKnownTerms, markKnown, unmarkKnown],
   );
   return (
     <VocabContext.Provider value={value}>
-      <LearningContext.Provider value={learningValue}>
-        <KnownContext.Provider value={knownValue}>
-          {children}
-        </KnownContext.Provider>
-      </LearningContext.Provider>
+      <KnownContext.Provider value={knownValue}>
+        {children}
+      </KnownContext.Provider>
     </VocabContext.Provider>
   );
 }
@@ -208,13 +200,6 @@ export function VocabProvider({ children }: { children: ReactNode }) {
 export function useVocab(): VocabState {
   const ctx = useContext(VocabContext);
   if (!ctx) throw new Error("useVocab must be used within VocabProvider");
-  return ctx;
-}
-
-/** Subscribes only to learning terms — won't re-render on known changes. */
-export function useLearning(): LearningState {
-  const ctx = useContext(LearningContext);
-  if (!ctx) throw new Error("useLearning must be used within VocabProvider");
   return ctx;
 }
 
@@ -236,7 +221,7 @@ export function useKnown(): KnownState {
  * use for it — sharing one value meant re-rendering 430 lines of draggable
  * rows per character typed.
  */
-type ShellState = {
+type FeedsState = {
   /** Feeds in priority order (highest first) — the sidebar source list. */
   feeds: FeedSource[];
   reloadFeeds: () => Promise<void>;
@@ -244,7 +229,9 @@ type ShellState = {
   commitFeedOrder: (orderedIds: string[]) => Promise<void>;
   /** bump after reorder → Home reloads its ranked list. */
   rerankNonce: number;
+};
 
+type FilterState = {
   /** Archive filter panel (source/level/read/liked) — toggled from Home. */
   filtersOpen: boolean;
   setFiltersOpen: (open: boolean) => void;
@@ -253,20 +240,6 @@ type ShellState = {
   focusSource: string | null;
   setFocusSource: (source: string | null) => void;
 };
-
-const ShellContext = createContext<ShellState | null>(null);
-
-type FeedsState = Pick<
-  ShellState,
-  "feeds" | "reloadFeeds" | "commitFeedOrder" | "rerankNonce"
->;
-type FilterState = Pick<
-  ShellState,
-  | "filtersOpen"
-  | "setFiltersOpen"
-  | "focusSource"
-  | "setFocusSource"
->;
 
 const FeedsContext = createContext<FeedsState | null>(null);
 const FilterContext = createContext<FilterState | null>(null);
@@ -335,28 +308,6 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     [reloadFeeds],
   );
 
-  const value = useMemo(
-    () => ({
-      feeds,
-      reloadFeeds,
-      commitFeedOrder,
-      rerankNonce,
-      filtersOpen,
-      setFiltersOpen,
-      focusSource,
-      setFocusSource,
-    }),
-    [
-      feeds,
-      reloadFeeds,
-      commitFeedOrder,
-      rerankNonce,
-      filtersOpen,
-      focusSource,
-      setFocusSource,
-    ],
-  );
-
   const feedsValue = useMemo(
     () => ({ feeds, reloadFeeds, commitFeedOrder, rerankNonce }),
     [feeds, reloadFeeds, commitFeedOrder, rerankNonce],
@@ -378,32 +329,24 @@ export function ShellProvider({ children }: { children: ReactNode }) {
   const queryValue = useMemo(() => ({ query, setQuery }), [query]);
 
   return (
-    <ShellContext.Provider value={value}>
-      <FeedsContext.Provider value={feedsValue}>
-        <FilterContext.Provider value={filterValue}>
-          <SearchQueryContext.Provider value={queryValue}>
-            {children}
-          </SearchQueryContext.Provider>
-        </FilterContext.Provider>
-      </FeedsContext.Provider>
-    </ShellContext.Provider>
+    <FeedsContext.Provider value={feedsValue}>
+      <FilterContext.Provider value={filterValue}>
+        <SearchQueryContext.Provider value={queryValue}>
+          {children}
+        </SearchQueryContext.Provider>
+      </FilterContext.Provider>
+    </FeedsContext.Provider>
   );
 }
 
-export function useShell(): ShellState {
-  const ctx = useContext(ShellContext);
-  if (!ctx) throw new Error("useShell must be used within ShellProvider");
-  return ctx;
-}
-
-/** Subscribes only to feeds/order — won't re-render on tag/filter changes. */
+/** Subscribes only to feeds/order — won't re-render on filter changes. */
 export function useFeeds(): FeedsState {
   const ctx = useContext(FeedsContext);
   if (!ctx) throw new Error("useFeeds must be used within ShellProvider");
   return ctx;
 }
 
-/** Subscribes only to filters/tags/focus — won't re-render on feeds changes. */
+/** Subscribes only to filters/focus — won't re-render on feeds changes. */
 export function useFilters(): FilterState {
   const ctx = useContext(FilterContext);
   if (!ctx) throw new Error("useFilters must be used within ShellProvider");

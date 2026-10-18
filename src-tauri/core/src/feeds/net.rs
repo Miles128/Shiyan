@@ -17,16 +17,26 @@ pub const MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
 /// Content-Length is rejected up front, and the streamed body is counted so a
 /// lying server (small header, huge body) cannot exceed the limit either.
 pub fn read_limited_bytes(
+    resp: reqwest::blocking::Response,
+) -> Result<Vec<u8>, AppError> {
+    read_limited_bytes_capped(resp, MAX_RESPONSE_BYTES)
+}
+
+/// Same contract with an explicit cap. The Gutenberg catalog CSV is ~21 MB,
+/// above the default body limit that exists for feed/article pages, so the
+/// books module asks for its own bound instead of raising the global one.
+pub fn read_limited_bytes_capped(
     mut resp: reqwest::blocking::Response,
+    cap: usize,
 ) -> Result<Vec<u8>, AppError> {
     if let Some(len) = resp.content_length() {
-        if len > MAX_RESPONSE_BYTES as u64 {
+        if len > cap as u64 {
             return Err(AppError::msg("响应过大，已跳过"));
         }
     }
     let mut capped = CappedBody {
         out: Vec::new(),
-        left: MAX_RESPONSE_BYTES,
+        left: cap,
         hit_cap: false,
     };
     match resp.copy_to(&mut capped) {

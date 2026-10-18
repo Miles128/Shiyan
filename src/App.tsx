@@ -8,13 +8,27 @@ import {
   shouldHideAppNav,
   shouldShowPlacementNav,
 } from "./placement/engine";
-import { useAppConfig, useFilters, useSearchQuery } from "./store";
+import { useAppConfig, useFeeds, useFilters, useSearchQuery } from "./store";
 import { useToast } from "./components/Toaster";
 import { emitEvent } from "./events";
+import {
+  IconBook,
+  IconClose,
+  IconFilter,
+  IconImport,
+  IconRefresh,
+  IconSearch,
+  IconSettings,
+  IconSidebar,
+  IconStats,
+  IconVocab,
+} from "./components/icons";
 import Sidebar from "./components/Sidebar";
+import BookSearchDialog from "./components/BookSearchDialog";
+import { importSummary } from "./bookDerived";
 import { applyTheme, isThemePref } from "./theme";
 import { api } from "./api";
-import { type RefreshProgress } from "./api";
+import { type ImportedBook, type RefreshProgress } from "./api";
 import "./App.css";
 
 /**
@@ -30,92 +44,11 @@ function beginWindowDrag(e: { button: number; target: EventTarget | null }) {
   void getCurrentWindow().startDragging();
 }
 
-function IconImport() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M12 3v12" />
-      <path d="m7 10 5 5 5-5" />
-      <path d="M4 19h16" />
-    </svg>
-  );
-}
-
-function IconVocab() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-    </svg>
-  );
-}
-
-function IconSettings() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.06l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .06-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.06-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.06H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.06l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.06 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-    </svg>
-  );
-}
-
-function IconStats() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M3 3v18h18" />
-      <path d="M7 15v3" />
-      <path d="M12 10v8" />
-      <path d="M17 6v12" />
-    </svg>
-  );
-}
-
-function IconRefresh() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-      <path d="M21 3v6h-6" />
-    </svg>
-  );
-}
-
-function IconSearch() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <circle cx="11" cy="11" r="7" />
-      <path d="m21 21-4.3-4.3" />
-    </svg>
-  );
-}
-
-function IconFilter() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M3 5h18l-7 8v5l-4 2v-7z" />
-    </svg>
-  );
-}
-
-function IconClose() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
-      <line x1="6" y1="6" x2="18" y2="18" />
-      <line x1="18" y1="6" x2="6" y2="18" />
-    </svg>
-  );
-}
-
-function IconSidebar() {
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <rect x="3" y="4" width="18" height="16" rx="2" />
-      <path d="M9 4v16" />
-    </svg>
-  );
-}
-
 export default function App() {
   const [progress, setProgress] = useState<RefreshProgress | null>(null);
   const [importingFile, setImportingFile] = useState(false);
+  /** Book search dialog (the only books entry point — topbar only). */
+  const [booksOpen, setBooksOpen] = useState(false);
   /** Home search input is collapsed until opened or text is present. */
   const [searchOpen, setSearchOpen] = useState(false);
   const toast = useToast();
@@ -124,6 +57,7 @@ export default function App() {
   const { cfg, ready, loadError, refresh } = useAppConfig();
   const { query, setQuery } = useSearchQuery();
   const { filtersOpen, setFiltersOpen } = useFilters();
+  const { reloadFeeds } = useFeeds();
 
   useEffect(() => {
     let cancelled = false;
@@ -190,7 +124,9 @@ export default function App() {
     try {
       selected = await open({
         multiple: false,
-        filters: [{ name: "文档", extensions: ["txt", "pdf", "docx"] }],
+        filters: [
+          { name: "文档", extensions: ["txt", "md", "markdown", "pdf", "docx"] },
+        ],
       });
     } catch (e) {
       toast.err(String(e));
@@ -210,8 +146,24 @@ export default function App() {
     }
   }
 
-  const forcePlacement = shouldForcePlacement(cfg);
-  const hideNav = shouldHideAppNav({
+  /**
+   * A book arrives as a feed plus one article per chapter, so the sidebar needs
+   * a reload and the reader opens on chapter 1 — the same landing behaviour as
+   * importing a single article.
+   */
+  async function onBookImported(book: ImportedBook) {
+    setBooksOpen(false);
+    toast.ok(importSummary(book.title, book.chapter_count));
+    try {
+      await reloadFeeds();
+    } catch {
+      // The reader landing is the real feedback; a failed sidebar reload just
+      // means the tree updates on the next paint.
+    }
+    navigate(`/article/${book.first_article_id}`);
+  }
+
+  const forcePlacement = shouldForcePlacement(cfg);  const hideNav = shouldHideAppNav({
     ready,
     loadError,
     forcePlacement,
@@ -360,6 +312,16 @@ export default function App() {
             >
               <IconImport />
             </button>
+            <button
+              type="button"
+              className={`topbar-btn${booksOpen ? " active" : ""}`}
+              onClick={() => setBooksOpen(true)}
+              title="搜索并导入英文书籍（Project Gutenberg）"
+              aria-label="搜索英文书籍"
+              aria-expanded={booksOpen}
+            >
+              <IconBook />
+            </button>
             <NavLink
               to="/vocab"
               className="topbar-btn"
@@ -397,8 +359,14 @@ export default function App() {
           </div>
         )}
         <Outlet />
-      </main>
+        </main>
       </div>
+      {booksOpen && (
+        <BookSearchDialog
+          onClose={() => setBooksOpen(false)}
+          onImported={(book) => void onBookImported(book)}
+        />
+      )}
       {(showBar || showDoneBriefly) && progress && (
         <div
           className={`refresh-progress ${progress.phase === "done" ? "done" : ""}`}

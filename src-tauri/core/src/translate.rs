@@ -31,7 +31,7 @@ pub struct FullTranslateResult {
 
 /// FNV-1a 64: stable across process restarts and compiler versions, unlike
 /// [`std::collections::hash_map::DefaultHasher`] (SipHash with a random key).
-pub fn fnv1a_64(text: &str) -> u64 {
+fn fnv1a_64(text: &str) -> u64 {
     let mut hash: u64 = 0xcbf29ce484222325;
     for byte in text.as_bytes() {
         hash ^= u64::from(*byte);

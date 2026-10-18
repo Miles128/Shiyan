@@ -56,21 +56,30 @@ describe("wordDifficultyWeight", () => {
   it("charges more for words further outside the band", () => {
     const learning = wordDifficultyWeight("time", PREFS, true);
     expect(learning).toBe(1.5);
-    // OOV words are weak evidence, not difficulty.
-    expect(wordDifficultyWeight("zzzqqq", PREFS, false)).toBe(0.5);
+  });
+
+  it("weights an out-of-lexicon word as one step out of reach", () => {
+    // Same verdict the reader now underlines it with. `disinflation` is
+    // advanced vocabulary that the CEFR headword list simply lacks.
+    expect(wordDifficultyWeight("disinflation", PREFS, false)).toBe(1);
+    expect(wordDifficultyWeight("sanctions", PREFS, false)).toBe(1);
+    // Short unknowns are inflections or typos — noise, not difficulty.
+    expect(wordDifficultyWeight("qqzz", PREFS, false)).toBe(0);
   });
 
   it("charges CEFR-above words the same rule as the underline", () => {
     // A word inside the freq band but above the CEFR level is underlined
-    // hard, so it must also weigh into the difficulty index.
-    const above = wordDifficultyWeight("ubiquitous", PREFS, false);
+    // hard, so it must also weigh into the difficulty index. `meticulous`
+    // is C2 (rank 17781); the CEFR gap is what separates the two weights,
+    // so the freq band is held fixed.
+    const above = wordDifficultyWeight("meticulous", PREFS, false);
     const atLevel = wordDifficultyWeight(
-      "ubiquitous",
-      { cefrLevel: "C2", freqBand: 3000 },
+      "meticulous",
+      { cefrLevel: "C2", freqBand: 20000 },
       false,
     );
     expect(above).toBeGreaterThan(0);
-    expect(atLevel).toBeLessThanOrEqual(above);
+    expect(atLevel).toBe(0);
   });
 });
 

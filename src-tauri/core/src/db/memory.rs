@@ -184,7 +184,7 @@ pub fn delete_memory(conn: &Connection, id: &str) -> Result<(), AppError> {
 /// or line break; double embedded quotes (RFC 4180). Prefix a single quote
 /// for fields starting with `=`, `+`, `-`, or `@` to prevent CSV formula
 /// injection when opened in spreadsheet applications.
-pub fn csv_field(s: &str) -> String {
+fn csv_field(s: &str) -> String {
     let s = if s.starts_with('=') || s.starts_with('+') || s.starts_with('-') || s.starts_with('@')
     {
         format!("'{s}")

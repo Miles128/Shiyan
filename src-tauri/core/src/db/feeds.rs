@@ -9,6 +9,7 @@ pub(crate) fn seed_feed_categories(conn: &Connection) -> Result<(), AppError> {
         ("tech", "科技"),
         ("finance", "财经"),
         ("world", "国际"),
+        ("book", "书籍"),
         ("other", "其他"),
     ];
     for (id, label) in builtins {
@@ -68,7 +69,7 @@ pub(crate) fn seed_feeds(conn: &Connection) -> Result<(), AppError> {
 pub fn list_feeds(conn: &Connection) -> Result<Vec<FeedSource>, AppError> {
     let mut stmt = conn
         .prepare(
-            "SELECT id,name,category,url,enabled,origin,description,etag,last_fetched_at,fulltext_ratio,priority,last_new_article_at FROM feed_sources ORDER BY category, priority DESC, name",
+            "SELECT id,name,category,url,enabled,origin,description,etag,last_fetched_at,fulltext_ratio,priority,last_new_article_at,kind FROM feed_sources ORDER BY category, priority DESC, name",
         )
         ?;
     let rows = stmt
@@ -301,11 +302,11 @@ pub fn subscribe_feed(
 /// re-seeded with INSERT OR IGNORE at startup, so deleting one would silently
 /// resurrect on the next launch — disable them instead.
 pub fn delete_user_feed(conn: &Connection, id: &str) -> Result<(), AppError> {
-    let origin: String = conn
+    let (origin, kind, name): (String, String, String) = conn
         .query_row(
-            "SELECT origin FROM feed_sources WHERE id=?1",
+            "SELECT origin, kind, name FROM feed_sources WHERE id=?1",
             params![id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()
         .map_err(AppError::from)?
@@ -313,8 +314,69 @@ pub fn delete_user_feed(conn: &Connection, id: &str) -> Result<(), AppError> {
     if origin != "user" {
         return Err(AppError::msg("精选订阅源不支持删除，可改为停用"));
     }
+    if kind == "book" {
+        // Deleting a book means deleting its chapters: they carry no meaning
+        // without the book row, and a re-import would resurrect the feed but
+        // keep the orphaned articles around (url UNIQUE would block reinsert).
+        conn.execute(
+            "DELETE FROM articles WHERE source=?1 AND origin='book'",
+            params![name],
+        )?;
+    }
     conn.execute("DELETE FROM feed_sources WHERE id=?1", params![id])?;
     Ok(())
+}
+
+/// Create (or re-enable) a book feed. One book = one feed row, kind='book':
+/// the sidebar tree, the source filter and the article list all work unchanged,
+/// while the refresh pipeline skips it (a book never produces new articles).
+pub fn insert_book_feed(
+    conn: &Connection,
+    name: &str,
+    url: &str,
+    description: &str,
+) -> Result<FeedSource, AppError> {
+    let name = name.trim();
+    let url = url.trim();
+    if name.is_empty() || url.is_empty() {
+        return Err(AppError::msg("书名与链接不能为空"));
+    }
+    let id = format!("book-{}", slugify_id(name));
+    if let Some(existing) = find_feed_by_url(conn, url)? {
+        conn.execute(
+            "UPDATE feed_sources SET name=?1, category='book', description=?2, enabled=1, kind='book' WHERE id=?3",
+            params![name, description, existing.id],
+        )?;
+        return Ok(FeedSource {
+            name: name.into(),
+            category: "book".into(),
+            description: description.into(),
+            enabled: true,
+            kind: "book".into(),
+            ..existing
+        });
+    }
+    let id = if feed_id_exists(conn, &id)? {
+        format!("book-{}", Uuid::new_v4())
+    } else {
+        id
+    };
+    conn.execute(
+        "INSERT INTO feed_sources (id, name, category, url, enabled, origin, description, last_new_article_at, kind)
+         VALUES (?1,?2,'book',?3,1,'user',?4,?5,'book')",
+        params![id, name, url, description, Utc::now().to_rfc3339()],
+    )?;
+    Ok(FeedSource {
+        id,
+        name: name.into(),
+        category: "book".into(),
+        url: url.into(),
+        enabled: true,
+        origin: "user".into(),
+        description: description.into(),
+        kind: "book".into(),
+        ..Default::default()
+    })
 }
 
 /// Feed ids a one-time cleanup removed; the startup seed must not re-insert them.
@@ -327,7 +389,7 @@ pub(crate) fn removed_feed_ids(conn: &Connection) -> Result<std::collections::Ha
 }
 
 fn find_feed_by_url(conn: &Connection, url: &str) -> Result<Option<FeedSource>, AppError> {    conn.query_row(
-        "SELECT id,name,category,url,enabled,origin,description,etag,last_fetched_at,fulltext_ratio,priority,last_new_article_at FROM feed_sources WHERE url=?1",
+        "SELECT id,name,category,url,enabled,origin,description,etag,last_fetched_at,fulltext_ratio,priority,last_new_article_at,kind FROM feed_sources WHERE url=?1",
         params![url],
         map_feed,
     )
@@ -361,6 +423,7 @@ fn map_feed(row: &rusqlite::Row<'_>) -> rusqlite::Result<FeedSource> {
         fulltext_ratio: row.get(9)?,
         priority: row.get(10)?,
         last_new_article_at: row.get(11)?,
+        kind: row.get(12)?,
     })
 }
 
@@ -402,6 +465,7 @@ pub fn prune_stale_feeds(conn: &Connection, days: i64) -> Result<Vec<String>, Ap
         let mut stmt = conn.prepare(
             "SELECT id, name, origin FROM feed_sources
               WHERE enabled = 1
+                AND kind <> 'book'
                 AND last_new_article_at IS NOT NULL
                 AND last_new_article_at < ?1",
         )?;

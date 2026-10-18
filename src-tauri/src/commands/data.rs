@@ -1,5 +1,5 @@
-use crate::db::{self, DbState};
-use crate::error::AppError;
+use shiyan_core::db::{self, DbState};
+use shiyan_core::error::AppError;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 

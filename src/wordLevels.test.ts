@@ -4,9 +4,12 @@ import {
   ensureChunksLoaded,
   ensureLexiconLoaded,
   isHardWord,
+  isOutOfLexiconHard,
+  isProperNounSurface,
   isSuperHardWord,
   lookupChunk,
   lookupWord,
+  properNounGloss,
   type AnnotatedSpan,
   type DifficultyPrefs,
 } from "./wordLevels";
@@ -46,11 +49,21 @@ describe("isSuperHardWord", () => {
   it("stays silent at only 1 CEFR step above", () => {
     // B2 for a B1 user is hard but not super-hard.
     expect(isSuperHardWord({ cefr: "B2", rank: 100 }, prefsB1)).toBe(false);
+    // ...however rare it is: rank alone must not buy a gloss.
+    expect(isSuperHardWord({ cefr: "B2", rank: 49000 }, prefsB1)).toBe(false);
   });
 
-  it("fires when rank exceeds 2× the freq band", () => {
-    expect(isSuperHardWord({ cefr: "A2", rank: 6500 }, prefsB1)).toBe(true);
-    expect(isSuperHardWord({ cefr: "A2", rank: 5000 }, prefsB1)).toBe(false);
+  // The regression that motivated the pure-CEFR rule: this lexicon's median
+  // rank is ~10400, so a band-relative cut flagged most of A1/A2 as super-hard
+  // (`sofa` 6147, `software` 6138, `t-shirt` 6128) and glossed them.
+  it("ignores frequency rank entirely", () => {
+    expect(isSuperHardWord({ cefr: "A2", rank: 6500 }, prefsB1)).toBe(false);
+    expect(isSuperHardWord({ cefr: "A1", rank: 21000 }, prefsB1)).toBe(false);
+    for (const w of ["sofa", "software", "t-shirt"]) {
+      const entry = lookupWord(w)!;
+      expect(isHardWord(entry, prefsB1)).toBe(true); // still underlined
+      expect(isSuperHardWord(entry, prefsB1)).toBe(false); // but never glossed
+    }
   });
 
   it("is a strict subset of isHardWord", () => {
@@ -69,6 +82,198 @@ describe("isSuperHardWord", () => {
   it("keeps the ceiling prefs (C2 / 20000) essentially superHard-free", () => {
     // Realistic news word: C1 rank 4500 → still within reach of C2/20k user.
     expect(isSuperHardWord({ cefr: "C1", rank: 4500 }, prefsC2)).toBe(false);
+    // Nothing is 2 CEFR steps above C2, so the ceiling user gets no glosses.
+    expect(isSuperHardWord({ cefr: "C2", rank: 49000 }, prefsC2)).toBe(false);
+  });
+});
+
+describe("isOutOfLexiconHard", () => {
+  it("treats a missing word as hard once it is long enough to be real", () => {
+    // Advanced news vocabulary absent from the 21k CEFR headword list.
+    for (const w of ["disinflation", "sprawling", "sanctions", "indiscriminate"]) {
+      expect(lookupWord(w)).toBeNull();
+      expect(isOutOfLexiconHard(w)).toBe(true);
+    }
+  });
+
+  it("ignores short unknowns (inflections, typos, clitics)", () => {
+    expect(isOutOfLexiconHard("eased")).toBe(false);
+    expect(isOutOfLexiconHard("reign")).toBe(false);
+  });
+
+  it("leaves a transparent compound alone — its parts are all known", () => {
+    // The learner reads `left-wing` from its parts, so the missing headword
+    // entry says nothing about difficulty.
+    for (const w of ["two-month", "left-wing", "open-source"]) {
+      expect(lookupWord(w)).toBeNull();
+      expect(isOutOfLexiconHard(w)).toBe(false);
+    }
+    // ...but a compound with an unknown part still counts.
+    expect(isOutOfLexiconHard("multi-year")).toBe(true);
+  });
+});
+
+describe("proper nouns (surface detection)", () => {
+  it("flags an initialism whatever its position", () => {
+    expect(isProperNounSurface("NATO", true)).toBe(true);
+    expect(isProperNounSurface("GDP", false)).toBe(true);
+  });
+
+  it("flags a capitalized non-sentence-initial word", () => {
+    expect(isProperNounSurface("Brussels", false)).toBe(true);
+  });
+
+  it("does not flag sentence-initial capitalization", () => {
+    // "Brussels" opening a sentence carries no evidence either way.
+    expect(isProperNounSurface("Brussels", true)).toBe(false);
+  });
+
+  it("never flags a lowercase word", () => {
+    expect(isProperNounSurface("brussels", false)).toBe(false);
+  });
+
+  it("keeps a name-tagged gloss and drops a common-noun one", () => {
+    // 普京（人名） is the name reading — keep it.
+    expect(properNounGloss(lookupWord("putin"))).toContain("普京");
+    expect(properNounGloss(lookupWord("kennedy"))).toContain("肯尼迪");
+    // 王牌，法宝 / 火鸡，无用的家伙 are ordinary words that collide with a
+    // name — showing them under a capitalized token is simply wrong.
+    expect(properNounGloss(lookupWord("trump"))).toBeUndefined();
+    expect(properNounGloss(lookupWord("turkey"))).toBeUndefined();
+    // Single-sense city entries are unambiguous, so they stay.
+    expect(properNounGloss(lookupWord("brussels"))).toBe("布鲁塞尔");
+  });
+
+  it("suppresses the wrong gloss on a real proper noun in running text", () => {
+    const spans = annotateText("Officials in Brussels met Donald Trump.", prefsB1, []);
+    const trump = spans.find((s) => s.type === "token" && s.text === "Trump");
+    expect(trump).toBeDefined();
+    if (trump?.type === "token") {
+      expect(trump.proper).toBe(true);
+      expect(trump.zh).toBeUndefined();
+    }
+  });
+
+  it("keeps a known name gloss and marks it hard", () => {
+    const spans = annotateText("He denied it, said Vladimir Putin.", prefsB1, []);
+    const putin = spans.find((s) => s.type === "token" && s.text === "Putin");
+    expect(putin).toBeDefined();
+    if (putin?.type === "token") {
+      expect(putin.proper).toBe(true);
+      expect(putin.zh).toContain("普京");
+      expect(putin.hard).toBe(true);
+    }
+  });
+
+  it("leaves an unknown name unhardened — a name is not a vocabulary gap", () => {
+    const spans = annotateText("Nvidia and OpenAI shipped the model.", prefsB1, []);
+    for (const name of ["Nvidia", "OpenAI"]) {
+      const span = spans.find((s) => s.type === "token" && s.text === name);
+      expect(span).toBeDefined();
+      if (span?.type === "token") {
+        expect(span.hard).toBe(false);
+        expect(span.superHard).toBe(false);
+        expect(span.zh).toBeUndefined();
+      }
+    }
+  });
+
+  it("still underlines an out-of-lexicon common word next to a name", () => {
+    const text = "Nvidia blamed disinflation and sprawling sanctions.";
+    const spans = annotateText(text, prefsB1, []);
+    for (const word of ["disinflation", "sprawling", "sanctions"]) {
+      const span = spans.find((s) => s.type === "token" && s.text === word);
+      expect(span).toBeDefined();
+      if (span?.type === "token") {
+        expect(span.hard).toBe(true);
+        expect(span.proper).toBe(false);
+      }
+    }
+  });
+
+  it("never treats a closed-class word as a name", () => {
+    // `the` has a single-cell gloss (那), so a name reading would hang it
+    // under the article. It capitalizes for grammar in every case below.
+    for (const text of [
+      '"The company said it would cut jobs.',
+      "Growth slowed — The cause was tariffs.",
+      "(The figures are provisional.)",
+      "He told The Times and The Guardian.",
+    ]) {
+      const the = annotateText(text, prefsB1, []).find(
+        (s) => s.type === "token" && s.text === "The",
+      );
+      expect(the).toBeDefined();
+      if (the?.type === "token") {
+        expect(the.proper).toBe(false);
+        expect(the.hard).toBe(false);
+      }
+    }
+    const a = annotateText('She said "A deal is close."', prefsB1, []).find(
+      (s) => s.type === "token" && s.text === "A",
+    );
+    if (a?.type === "token") expect(a.proper).toBe(false);
+  });
+
+  it("reads an opening quote / dash as a clause start", () => {
+    // Previously the quoted capital looked like a name, which also cost an
+    // out-of-lexicon word its underline (a name is never a vocabulary gap).
+    const spans = annotateText('"Disinflation is coming," he said.', prefsB1, []);
+    const word = spans.find(
+      (s) => s.type === "token" && s.text === "Disinflation",
+    );
+    expect(word).toBeDefined();
+    if (word?.type === "token") {
+      expect(word.proper).toBe(false);
+      expect(word.hard).toBe(true);
+      expect(word.zh).toBeUndefined(); // no dictionary row: still no wrong gloss
+    }
+  });
+
+  it("still reads a quoted name mid-sentence as a name", () => {
+    const spans = annotateText('The paper "The Times" reported it.', prefsB1, []);
+    const the = spans.find((s) => s.type === "token" && s.text === "The");
+    // The article is never a name, whatever the quote; `Times` carries it.
+    if (the?.type === "token") expect(the.proper).toBe(false);
+  });
+
+  it("does not read a clause boundary as a name", () => {
+    // A capitalized common noun after `:` / `;` is conventional, and its
+    // gloss is correct — treating it as a name would strip it.
+    const spans = annotateText("In short: Officials said; Sovereign bonds fell.", prefsB1, []);
+    for (const word of ["Officials", "Sovereign"]) {
+      const span = spans.find((s) => s.type === "token" && s.text === word);
+      expect(span).toBeDefined();
+      if (span?.type === "token") {
+        expect(span.proper).toBe(false);
+        expect(span.zh).toBeTruthy();
+      }
+    }
+  });
+
+  it("sees through an abbreviation dot: Mr. Smith is still a name", () => {
+    const spans = annotateText("Mr. Smith met Dr. Biden.", prefsB1, []);
+    const smith = spans.find((s) => s.type === "token" && s.text === "Smith");
+    expect(smith).toBeDefined();
+    if (smith?.type === "token") expect(smith.proper).toBe(true);
+  });
+
+  it("treats an honorific as conventional text, never as a name", () => {
+    // `Ms` must not resolve to 美国微软公司, and a title is not a vocab gap.
+    const spans = annotateText("Mr. Smith met Ms. O'Neill. Dr. Biden spoke.", prefsB1, []);
+    for (const title of ["Mr", "Ms", "Dr"]) {
+      const span = spans.find((s) => s.type === "token" && s.text === title);
+      expect(span).toBeDefined();
+      if (span?.type === "token") {
+        expect(span.proper).toBe(false);
+        expect(span.hard).toBe(false);
+        expect(span.zh ?? "").not.toContain("微软");
+      }
+    }
+    // `Mr` / `Dr` do carry a correct gloss.
+    expect(spans.find((s) => s.type === "token" && s.text === "Dr")).toMatchObject({
+      zh: "博士",
+    });
   });
 });
 

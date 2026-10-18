@@ -171,6 +171,8 @@ export function useArticle(id: string | undefined) {
     paragraphs,
     translations,
     setTranslations,
+    /** Chapter position when the article is a book chapter, else null. */
+    book: serverView?.book ?? null,
     error,
     setError: setActionError,
     loading: viewQuery.isLoading,

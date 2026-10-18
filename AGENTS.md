@@ -16,32 +16,33 @@
 src/                  React 前端
   main.tsx            入口：Provider + HashRouter 路由表
   App.tsx             布局壳：侧边栏 + 全局刷新进度条 + 测评强跳
-  store.tsx           AppConfig / Vocab(学习中生词+已认识词) 两个 Context
-  api/                Tauri invoke 封装层（config/feeds/articles/memory + 类型门面）
+  store.tsx           AppConfig / Shell(订阅源+筛选) / Vocab(学习中生词+已认识词) 三组 Context
+  api/                Tauri invoke 封装层（config/feeds/articles/memory/books/data + 类型门面）
   pages/              Home(主界面：文章列表+筛选) Reader(阅读) Vocab(生词/短语/已认识三库) Stats Settings(分页) Placement(词汇测评)
-  components/         SelectionPopover(划词浮窗) MemoryLibrary(生词/短语共用) KnownWords(已认识词管理) SourceBoard ArticleRow ManageFeeds FeedDiscoverSection ReaderParagraph
+  components/         SelectionPopover(划词浮窗) MemoryLibrary(生词/短语共用) KnownWords(已认识词管理) SourceBoard ArticleRow ManageFeeds FeedDiscoverSection ReaderParagraph BookSearchDialog(Gutenberg 搜索导入)
+  bookDerived.ts      书籍域展示助手：作者名翻转/元信息行/书架分类/导入摘要（node-only vitest 可测，同 homeDerived 惯例）
   homeDerived.ts      Home 列表派生逻辑：摘要/长度标签/按源分组/标签栏/今日推荐/难度加权排序
   wordResolve.ts      划词解析域：选区归一(lemma/全大写/短语判定) + 内置词典详情(word-details.json)
   useArticle.ts       Reader 加载 hook + 上次阅读/滚动位置记忆
   readerUtils.ts      Reader 工具：分类标签/上下文截取/翻译进度合并/Markdown 判定
   knownWords.ts       已认识词过滤纯函数
-  difficulty.ts       难度标定/分档/标签 + 「约认识 N%」估算
+  difficulty.ts     难度标定/分档/标签 + 「约认识 N%」估算（疑难词判据：superHard 纯 CEFR ≥2 级；OOV 长词默认难词；专有名词按表层检测，不下普通词义）
   annotateText.tsx    按CEFR/词频给难词加下划线
   wordLevels.ts       懒加载内置 CEFR+词频词典(word-levels.json)
   tts.ts/useTts.ts    Web Speech 朗读
 src-tauri/            Cargo workspace（target/ 仍是唯一产物目录）
   src/                壳 crate `shiyan`：只含 Tauri 胶水，不写业务
-    lib.rs            应用入口：打开 SQLite(app_data_dir) 注入 DbState(读写双连接)，注册全部 command；对 shiyan-core 做 `use` 重导出，commands 里 `crate::db::…` 路径不变
-    commands/         Tauri command 薄层(articles/config/feeds/known/memory)：阻塞工作 spawn_blocking，进度走 event("refresh-progress"/"translate-progress")；后台 enrichment 胶水(enrich_memory_background)也在这里
+    lib.rs            应用入口：打开 SQLite(app_data_dir) 注入 DbState(读写双连接)，注册全部 command；commands 直接 `use shiyan_core::…`，无重导出 shim
+    commands/         Tauri command 薄层(articles/books/config/feeds/known/memory/data)：阻塞工作 spawn_blocking，进度走 event("refresh-progress"/"translate-progress")；后台 enrichment 胶水(enrich_memory_background)也在这里。books 三命令：ensure_book_catalog(目录就绪)/search_books(本地搜)/import_book(gid 导入)
   core/               业务 crate `shiyan-core`：零 tauri 依赖（写 `use tauri::` 直接编译不过），改核心逻辑用 `cargo check/test -p shiyan-core` 编译面更小
-    src/db/           仓储层：mod(schema+migration) articles feeds curated_feeds(内置订阅源种子) translations memory(生词+短语统一表) known(已认识词)
+    src/db/           仓储层：mod(schema+migration) articles feeds curated_feeds(内置订阅源种子) translations memory(生词+短语统一表) known(已认识词) books_catalog(Gutenberg 目录镜像 book_catalog 表：存查，不下载不解析)
+    src/books/        公版书订阅（Project Gutenberg）：mod(模型：一书=feed_sources 行 kind='book'，一章=普通文章 origin='book') catalog(官方 CSV 下载+镜像) text(.txt 清洗) chapters(章切分启发式) import(单书导入，单事务幂等)
     src/feeds/        RSS 管线（按职责分模块）：net(HTTP/SSRF/URL校验) filters(可读性/英文/屏蔽/付费墙) extract(页面抽取) dedup(URL/标题去重) pipeline(refresh主流程) cleanup(审计/清理/修复) enrich(翻译/标签回填) import(URL导入) tests
     src/vocab.rs      OpenAI 兼容 LLM 客户端：段落翻译、生词/短语 enrichment、RSS 发现
     src/translate.rs  翻译缓存 + 编排层
-    src/rank.rs       兴趣排序：freshness×亲和度 + 显式信号 + tag IDF
-    src/srs.rs        简化间隔重复：again/hard/easy，连续 easy≥3 且 14d 即 mastered
+        src/srs.rs        简化间隔重复：again/hard/easy，连续 easy≥3 且 14d 即 mastered
     src/reflow.rs     段落整形（core 内部，仅 feeds/测试调用）
-    src/import_file.rs txt/pdf/docx 本地导入
+    src/import_file.rs txt/md/pdf/docx 本地导入（md 原样入库，URL 带 .md 后缀让 Reader 稳定走 Markdown 渲染）
     src/article_view.rs Reader 载荷组装(ArticleView = 文章+段落+缓存翻译)
     src/db_tests.rs   DB 层集成测试
     src/config.rs     config.local.json 读写(API key 等)，0600 权限
@@ -56,6 +57,7 @@ src-tauri/            Cargo workspace（target/ 仍是唯一产物目录）
 - 文章幂等去重按 `url UNIQUE`，`insert_article_if_new` 冲突即跳过；RSS 旧文只在 RSS 正文可信且更长时升级。
 - 正文阈值：RSS 正文 ≥2000 字符且像可读文章才信任；否则须抓文章页。导航/关键词墙、链接列表、不足 400 字散文（MIN_FULLTEXT_CHARS）一律不入库，刷新时清掉。
 - `origin` 字段区分 rss/url/file 导入；refresh 的清理(purge)只处理 rss 来源，永不删用户导入。
+- 公版书复用订阅模型：一书 = `feed_sources` 行(`kind='book'`)，一章 = 普通文章(`origin='book'`、`chapter_no=章序`)，除导入/搜索外全链路不感知书籍；导入按 url 幂等，purge 同样永不碰 `origin='book'`。
 - `title_zh` DB 列已废弃：代码零引用，仅 schema/迁移保留（免迁移），不要再往结构体或 SQL 里加回。
 - LLM 配置在 `config.local.json`（gitignore）；无 Key 时翻译功能优雅降级。
 
@@ -65,13 +67,10 @@ src-tauri/            Cargo workspace（target/ 仍是唯一产物目录）
 
 **跑测试前关掉桌面会话**：`tauri dev` 监听 `src-tauri`，重编译会重启 macOS 窗口并抢焦点。`pnpm test` 的 `pretest` 会自动杀 `tauri dev` / `target/debug/shiyan`（不杀浏览器模式 `pnpm dev`）。手动跑 `cargo test` 前也要先关，或先执行 `node scripts/stop-desktop.mjs`。
 
-Verify before claiming done (desktop must be closed — pretest handles `pnpm test`):
+Verify before claiming done（一条命令即可；pretest 自动关桌面会话）：
 
 ```bash
-node scripts/stop-desktop.mjs   # if cargo test runs while tauri dev is up
-pnpm test
-pnpm build
-cd src-tauri && cargo test
+pnpm verify   # tsc + eslint + vitest + build + cargo test（core+壳）
 ```
 
 Desktop smoke (macOS + Rust) — only when you need the real window, not during tests:

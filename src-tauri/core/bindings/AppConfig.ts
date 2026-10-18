@@ -53,7 +53,8 @@ theme: string,
 article_retention_days: number, 
 /**
  * Show a small Chinese gloss beneath "super-hard" words while reading
- * (≥2 CEFR steps above the user's level, or frequency rank past 2× the
- * band). Off = the reader stays as clean as before; underline still works.
+ * (CEFR ≥2 levels above the user's level; proper nouns use their
+ * name gloss). Off = the reader stays as clean as before; underline
+ * still works. Evaluated in the frontend (`isSuperHardWord`).
  */
 show_hard_word_gloss: boolean, };

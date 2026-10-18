@@ -5,6 +5,7 @@
 //! single facade entry point.
 
 mod articles;
+mod books_catalog;
 mod curated_feeds;
 mod feeds;
 mod known;
@@ -13,6 +14,7 @@ mod memory;
 mod translations;
 
 pub use articles::*;
+pub use books_catalog::*;
 pub use curated_feeds::*;
 pub use known::*;
 pub use lookups::*;
@@ -274,6 +276,14 @@ pub struct FeedSource {
     /// 见 feeds::prune_stale_feeds；重新启用订阅时重置。
     #[serde(default)]
     pub last_new_article_at: Option<String>,
+    /// 'rss' = 抓 RSS 的订阅源；'book' = 书籍（一本书就是一个源，章节是文章）。
+    /// 刷新流程与沉寂清理都跳过 book，见 feeds::pipeline::select_enabled_feeds。
+    #[serde(default = "default_feed_kind")]
+    pub kind: String,
+}
+
+fn default_feed_kind() -> String {
+    "rss".into()
 }
 
 fn default_feed_origin() -> String {
@@ -287,6 +297,31 @@ pub struct FeedCategory {
     pub label: String,
     pub builtin: bool,
 }
+
+/// One row of the Project Gutenberg catalog mirror (`book_catalog`). Search
+/// runs locally against this table, so the UI never depends on a third-party
+/// API. Kept out of `FeedSource` / `Article` on purpose: a catalog row is not a
+/// subscription and carries no reading state.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CatalogBook {
+    /// Project Gutenberg ebook number.
+    #[ts(type = "number")]
+    pub gid: i64,
+    pub title: String,
+    /// "Melville, Herman, 1819-1891" — CSV form, left as published.
+    pub authors: String,
+    /// First issue date (`1871-01-01`), '' when the catalog has none.
+    pub issued: String,
+    /// Coarse genre from the first `Category:` entry of the catalog's
+    /// `Bookshelves` column; '' when the catalog has none.
+    pub shelf: String,
+    pub subjects: String,
+    /// Already imported as a book feed? Filled by the search command.
+    #[serde(default)]
+    pub imported: bool,
+}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -433,9 +468,12 @@ pub fn validate_backup_file(path: &std::path::Path) -> Result<i64, AppError> {
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
     )?;
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    if version > LATEST_VERSION {
+    // Compare against the highest version any shipped backup can carry, not
+    // LATEST_VERSION: pre-collapse backups stamp up to 19 and stay importable
+    // (migrate normalizes their counter on next launch).
+    if version > MAX_IMPORTABLE_VERSION {
         return Err(AppError::msg(format!(
-            "备份来自更新版本的 App（schema v{version}），当前最高支持 v{LATEST_VERSION}"
+            "备份来自更新版本的 App（schema v{version}），当前最高支持 v{MAX_IMPORTABLE_VERSION}"
         )));
     }
     for table in ["articles", "feed_sources", "memory_items"] {
@@ -559,21 +597,69 @@ pub(crate) fn backup_before_migration(conn: &Connection, path: &std::path::Path)
     if backup.exists() {
         return;
     }
-    let _ = vacuum_into_file(conn, &backup);
+    if vacuum_into_file(conn, &backup).is_ok() {
+        prune_migration_backups(path);
+    }
 }
 
+/// Keep only the two newest `premigrate-vN.bak` snapshots; each migration used
+/// to leave one behind forever (~107 MB of history on a single-user install).
+fn prune_migration_backups(path: &std::path::Path) {
+    const KEEP: usize = 2;
+    let Ok(entries) = std::fs::read_dir(path.parent().unwrap_or(std::path::Path::new(".")))
+    else {
+        return;
+    };
+    let prefix = format!("{DB_FILE_NAME}.premigrate-");
+    let mut backups: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with(&prefix) && n.ends_with(".bak"))
+        })
+        .filter_map(|p| {
+            let mtime = p.metadata().and_then(|m| m.modified()).ok()?;
+            Some((mtime, p))
+        })
+        .collect();
+    // Newest first; mtime (not the version number in the name) is the truth,
+    // because several historical snapshots share the same size and order is
+    // only meaningful by when they were taken.
+    backups.sort_by(|a, b| b.0.cmp(&a.0));
+    for (_, p) in backups.into_iter().skip(KEEP) {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
+/// The current schema, collapsed from the historical v1–v19 evolution
+/// (2026-10). Each migration's DDL was merged into one idempotent baseline, so
+/// a fresh database is born at the shape v19 used to leave behind.
+///
+/// One deliberate difference: the dead `articles.title_zh` column (deprecated,
+/// zero code references) is dropped by v2 below instead of carried forever.
 const BASELINE_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS articles (
     id TEXT PRIMARY KEY,
     url TEXT NOT NULL UNIQUE,
     title TEXT NOT NULL,
-    title_zh TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL,
     category TEXT NOT NULL,
     published_at TEXT,
     content_text TEXT NOT NULL,
     fetched_at TEXT NOT NULL,
-    origin TEXT NOT NULL DEFAULT 'rss'
+    origin TEXT NOT NULL DEFAULT 'rss',
+    summary_zh TEXT NOT NULL DEFAULT '',
+    last_opened_at TEXT,
+    open_count INTEGER NOT NULL DEFAULT 0,
+    word_count INTEGER NOT NULL DEFAULT 0,
+    quality TEXT NOT NULL DEFAULT '',
+    extraction_source TEXT NOT NULL DEFAULT '',
+    dwell_ms INTEGER NOT NULL DEFAULT 0,
+    read_completed INTEGER NOT NULL DEFAULT 0,
+    liked INTEGER NOT NULL DEFAULT 0,
+    chapter_no INTEGER
 );
 CREATE TABLE IF NOT EXISTS feed_sources (
     id TEXT PRIMARY KEY,
@@ -582,7 +668,14 @@ CREATE TABLE IF NOT EXISTS feed_sources (
     url TEXT NOT NULL UNIQUE,
     enabled INTEGER NOT NULL DEFAULT 1,
     origin TEXT NOT NULL DEFAULT 'curated',
-    description TEXT NOT NULL DEFAULT ''
+    description TEXT NOT NULL DEFAULT '',
+    etag TEXT NOT NULL DEFAULT '',
+    last_fetched_at TEXT,
+    fulltext_ratio REAL NOT NULL DEFAULT -1,
+    priority INTEGER NOT NULL DEFAULT 0,
+    fail_count INTEGER NOT NULL DEFAULT 0,
+    last_new_article_at TEXT,
+    kind TEXT NOT NULL DEFAULT 'rss'
 );
 CREATE TABLE IF NOT EXISTS feed_categories (
     id TEXT PRIMARY KEY,
@@ -598,13 +691,15 @@ CREATE TABLE IF NOT EXISTS translations (
     translated_text TEXT NOT NULL,
     model TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    UNIQUE(article_id, scope, scope_key)
+    UNIQUE(article_id, scope, scope_key),
+    FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
 );
-CREATE TABLE IF NOT EXISTS vocab (
+CREATE TABLE IF NOT EXISTS memory_items (
     id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL DEFAULT 'word',
     term TEXT NOT NULL,
-    definition_zh TEXT NOT NULL,
-    word_type TEXT NOT NULL,
+    definition_zh TEXT NOT NULL DEFAULT '',
+    word_type TEXT NOT NULL DEFAULT '',
     collocations_json TEXT NOT NULL DEFAULT '[]',
     context_sentence TEXT NOT NULL DEFAULT '',
     article_id TEXT,
@@ -613,50 +708,66 @@ CREATE TABLE IF NOT EXISTS vocab (
     reps INTEGER NOT NULL DEFAULT 0,
     consecutive_know INTEGER NOT NULL DEFAULT 0,
     next_review_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE SET NULL
+);
+CREATE TABLE IF NOT EXISTS known_words (
+    term TEXT PRIMARY KEY,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS lookup_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    term TEXT NOT NULL,
+    context TEXT NOT NULL DEFAULT '',
+    article_id TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS app_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS removed_feeds (
+    id TEXT PRIMARY KEY,
+    removed_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS book_catalog (
+    gid INTEGER PRIMARY KEY,
+    title TEXT NOT NULL DEFAULT '',
+    authors TEXT NOT NULL DEFAULT '',
+    issued TEXT NOT NULL DEFAULT '',
+    shelf TEXT NOT NULL DEFAULT '',
+    subjects TEXT NOT NULL DEFAULT ''
+);
 CREATE INDEX IF NOT EXISTS idx_articles_category ON articles(category);
-CREATE INDEX IF NOT EXISTS idx_vocab_status ON vocab(status);
-CREATE INDEX IF NOT EXISTS idx_vocab_next ON vocab(next_review_at);
+CREATE INDEX IF NOT EXISTS idx_articles_fetched ON articles(fetched_at DESC);
+CREATE INDEX IF NOT EXISTS idx_articles_origin_quality ON articles(origin, quality);
 CREATE INDEX IF NOT EXISTS idx_translations_article ON translations(article_id);
-CREATE INDEX IF NOT EXISTS idx_vocab_article ON vocab(article_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_kind_term ON memory_items(kind, lower(term));
+CREATE INDEX IF NOT EXISTS idx_memory_kind_status ON memory_items(kind, status);
+CREATE INDEX IF NOT EXISTS idx_memory_next ON memory_items(next_review_at);
+CREATE INDEX IF NOT EXISTS idx_memory_article ON memory_items(article_id);
+CREATE INDEX IF NOT EXISTS idx_lookup_created ON lookup_history(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_lookup_term ON lookup_history(lower(term));
 "#;
-
-/// Column additions for databases created before these fields existed.
-/// Only runs once (while stamping version 1); "duplicate column name" is the
-/// expected no-op case.
-const LEGACY_COLUMN_ADDITIONS: &[&str] = &[
-    "ALTER TABLE articles ADD COLUMN title_zh TEXT NOT NULL DEFAULT ''",
-    "ALTER TABLE feed_sources ADD COLUMN origin TEXT NOT NULL DEFAULT 'curated'",
-    "ALTER TABLE feed_sources ADD COLUMN description TEXT NOT NULL DEFAULT ''",
-    "ALTER TABLE articles ADD COLUMN origin TEXT NOT NULL DEFAULT 'rss'",
-];
 
 /// Version-gated migrations. To add one: raise `LATEST_VERSION` and apply its
 /// DDL inside `migrate` when `stored < N`. Stamp each version with its own
 /// number (never `LATEST_VERSION`) so later steps are not skipped.
-const LATEST_VERSION: i64 = 18;
+pub(crate) const LATEST_VERSION: i64 = 2;
 
-/// Run one `ALTER TABLE … ADD COLUMN`, tolerating "duplicate column name" as
-/// a no-op: legacy databases created before version stamping may already have
-/// the column.
-fn add_column_if_missing(conn: &Connection, sql: &str) -> Result<(), AppError> {
-    if let Err(e) = conn.execute(sql, []) {
-        // Error text comes from the bundled SQLite; match the stable prefix
-        // rather than the full English sentence.
+/// The highest user_version any pre-collapse database can carry. Backup files
+/// written before the collapse (`.premigrate-v*.bak`) stamp up to 19; imports
+/// must accept them even though the counter now tops out lower.
+const MAX_IMPORTABLE_VERSION: i64 = 19;
+
+/// Drop the deprecated `articles.title_zh` column (v2). Tolerates "no such
+/// column": fresh baselines never had it.
+fn drop_title_zh_column(conn: &Connection) -> Result<(), AppError> {
+    if let Err(e) = conn.execute("ALTER TABLE articles DROP COLUMN title_zh", []) {
         let msg = e.to_string();
-        if msg.contains("duplicate column name") {
-            return Ok(());
+        if !msg.contains("no such column") {
+            return Err(AppError::from(e));
         }
-        return Err(AppError::from(e));
-    }
-    Ok(())
-}
-
-/// [`add_column_if_missing`] over a batch of DDL statements.
-fn add_columns_if_missing(conn: &Connection, sqls: &[&str]) -> Result<(), AppError> {
-    for sql in sqls {
-        add_column_if_missing(conn, sql)?;
     }
     Ok(())
 }
@@ -666,325 +777,25 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), AppError> {
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         ?;
 
+    // Pre-collapse databases stamp 1..=19. Their schema is exactly what
+    // BASELINE_SCHEMA reproduces (plus the dead title_zh column), so instead
+    // of replaying history, normalize the counter to 1 and let v2 below drop
+    // the dead column. Normalizing matters: leaving stored=19 would make every
+    // future `stored < N` gate skip its migration forever.
+    if stored > LATEST_VERSION {
+        stored = 1;
+    }
+
     if stored < 1 {
-        // v0 → v1: baseline schema. Idempotent DDL makes this safe both for fresh
-        // databases and legacy ones that predate user_version stamping.
         conn.execute_batch(BASELINE_SCHEMA)?;
-        add_columns_if_missing(conn, LEGACY_COLUMN_ADDITIONS)?;
         conn.pragma_update(None, "user_version", 1)?;
         stored = 1;
     }
 
     if stored < 2 {
-        collapse_duplicate_vocab_terms(conn)?;
-        conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_vocab_term_lower ON vocab(lower(term))",
-            [],
-        )
-        ?;
-        conn.pragma_update(None, "user_version", 2)
-            ?;
+        drop_title_zh_column(conn)?;
+        conn.pragma_update(None, "user_version", 2)?;
         stored = 2;
-    }
-
-    if stored < 3 {
-        apply_v3_foreign_keys(conn)?;
-        conn.pragma_update(None, "user_version", 3)
-            ?;
-        stored = 3;
-    }
-
-    if stored < 4 {
-        add_column_if_missing(
-            conn,
-            "ALTER TABLE articles ADD COLUMN summary_zh TEXT NOT NULL DEFAULT ''",
-        )?;
-        conn.pragma_update(None, "user_version", 4)?;
-        stored = 4;
-    }
-
-    if stored < 5 {
-        add_columns_if_missing(conn, &[
-            "ALTER TABLE articles ADD COLUMN last_opened_at TEXT",
-            "ALTER TABLE articles ADD COLUMN open_count INTEGER NOT NULL DEFAULT 0",
-        ])?;
-        conn.pragma_update(None, "user_version", 5)?;
-        stored = 5;
-    }
-
-    if stored < 6 {
-        // Quality metadata (stamped at ingest) + implicit reading signals
-        // (dwell / completion / like) + per-feed HTTP/1.1 cache metadata.
-        add_columns_if_missing(conn, &[
-            "ALTER TABLE articles ADD COLUMN word_count INTEGER NOT NULL DEFAULT 0",
-            "ALTER TABLE articles ADD COLUMN quality TEXT NOT NULL DEFAULT ''",
-            "ALTER TABLE articles ADD COLUMN extraction_source TEXT NOT NULL DEFAULT ''",
-            "ALTER TABLE articles ADD COLUMN dwell_ms INTEGER NOT NULL DEFAULT 0",
-            "ALTER TABLE articles ADD COLUMN read_completed INTEGER NOT NULL DEFAULT 0",
-            "ALTER TABLE articles ADD COLUMN liked INTEGER NOT NULL DEFAULT 0",
-            "ALTER TABLE feed_sources ADD COLUMN etag TEXT NOT NULL DEFAULT ''",
-            "ALTER TABLE feed_sources ADD COLUMN last_fetched_at TEXT",
-            "ALTER TABLE feed_sources ADD COLUMN fulltext_ratio REAL NOT NULL DEFAULT -1",
-        ])?;
-        conn.execute_batch(
-            "CREATE INDEX IF NOT EXISTS idx_articles_fetched ON articles(fetched_at DESC);
-             CREATE INDEX IF NOT EXISTS idx_articles_origin_quality ON articles(origin, quality);",
-        )
-        ?;
-        conn.pragma_update(None, "user_version", 6)
-            ?;
-        stored = 6;
-    }
-
-    if stored < 7 {
-        // Topic tags from card translation — input for semantic interest profiling.
-        add_column_if_missing(
-            conn,
-            "ALTER TABLE articles ADD COLUMN tags_json TEXT NOT NULL DEFAULT ''",
-        )?;
-        conn.pragma_update(None, "user_version", 7)?;
-        stored = 7;
-    }
-
-    if stored < 8 {
-        // Key/value app metadata: one-time backfill markers and similar
-        // bookkeeping that must not be re-derived every refresh.
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS app_meta (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            );",
-        )
-        ?;
-        conn.pragma_update(None, "user_version", 8)
-            ?;
-        stored = 8;
-    }
-
-    if stored < 9 {
-        // Phrase library: saved phrases/collocations with their own SRS state.
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS phrases (
-                id TEXT PRIMARY KEY,
-                phrase TEXT NOT NULL,
-                meaning_zh TEXT NOT NULL DEFAULT '',
-                usage TEXT NOT NULL DEFAULT '',
-                context_sentence TEXT NOT NULL DEFAULT '',
-                article_id TEXT,
-                status TEXT NOT NULL DEFAULT 'learning',
-                interval_days REAL NOT NULL DEFAULT 0,
-                reps INTEGER NOT NULL DEFAULT 0,
-                consecutive_know INTEGER NOT NULL DEFAULT 0,
-                next_review_at TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE SET NULL
-            );
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_phrase_lower ON phrases(lower(phrase));
-            CREATE INDEX IF NOT EXISTS idx_phrase_status ON phrases(status);
-            CREATE INDEX IF NOT EXISTS idx_phrase_next ON phrases(next_review_at);",
-        )
-        ?;
-        conn.pragma_update(None, "user_version", 9)
-            ?;
-        stored = 9;
-    }
-
-    if stored < 10 {
-        // Unify vocab + phrases into one `memory_items` table with a `kind`
-        // column. Both libraries share the same columns and SRS state.
-        // Wrapped in a single transaction so a crash mid-migration leaves the
-        // version stamp and DDL in a consistent state.
-        let tx = conn.unchecked_transaction()?;
-        tx.execute_batch(
-            "CREATE TABLE IF NOT EXISTS memory_items (
-                id TEXT PRIMARY KEY,
-                kind TEXT NOT NULL DEFAULT 'word',
-                term TEXT NOT NULL,
-                definition_zh TEXT NOT NULL DEFAULT '',
-                word_type TEXT NOT NULL DEFAULT '',
-                collocations_json TEXT NOT NULL DEFAULT '[]',
-                context_sentence TEXT NOT NULL DEFAULT '',
-                article_id TEXT,
-                status TEXT NOT NULL DEFAULT 'learning',
-                interval_days REAL NOT NULL DEFAULT 0,
-                reps INTEGER NOT NULL DEFAULT 0,
-                consecutive_know INTEGER NOT NULL DEFAULT 0,
-                next_review_at TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE SET NULL
-            );
-            INSERT OR IGNORE INTO memory_items
-                (id, kind, term, definition_zh, word_type, collocations_json,
-                 context_sentence, article_id, status, interval_days, reps,
-                 consecutive_know, next_review_at, created_at)
-            SELECT id, 'word', term, definition_zh, word_type, collocations_json,
-                   context_sentence, article_id, status, interval_days, reps,
-                   consecutive_know, next_review_at, created_at
-              FROM vocab;
-            INSERT OR IGNORE INTO memory_items
-                (id, kind, term, definition_zh, word_type, collocations_json,
-                 context_sentence, article_id, status, interval_days, reps,
-                 consecutive_know, next_review_at, created_at)
-            SELECT id, 'phrase', phrase, meaning_zh, usage, '[]',
-                   context_sentence, article_id, status, interval_days, reps,
-                   consecutive_know, next_review_at, created_at
-              FROM phrases;
-            -- Rename (never DROP) the legacy tables so the source rows stay
-            -- recoverable if the copy above ever goes wrong.
-            ALTER TABLE vocab RENAME TO _legacy_vocab;
-            ALTER TABLE phrases RENAME TO _legacy_phrases;
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_kind_term
-                ON memory_items(kind, lower(term));
-            CREATE INDEX IF NOT EXISTS idx_memory_kind_status
-                ON memory_items(kind, status);
-            CREATE INDEX IF NOT EXISTS idx_memory_next ON memory_items(next_review_at);
-            CREATE INDEX IF NOT EXISTS idx_memory_article ON memory_items(article_id);",
-        )?;
-        tx.pragma_update(None, "user_version", 10)?;
-        tx.commit()?;
-        stored = 10;
-    }
-
-    if stored < 11 {
-        // Known words: words the learner has marked as already known, so they
-        // stop being underlined and stop counting toward article difficulty.
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS known_words (
-                term TEXT PRIMARY KEY,
-                created_at TEXT NOT NULL
-            );",
-        )
-        ?;
-        conn.pragma_update(None, "user_version", 11)
-            ?;
-        stored = 11;
-    }
-
-    if stored < 12 {
-        // Lookup history: every term the learner looked up via the selection
-        // popover (bundled dictionary or AI), reviewed in the Vocab page.
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS lookup_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                term TEXT NOT NULL,
-                context TEXT NOT NULL DEFAULT '',
-                article_id TEXT,
-                created_at TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_lookup_created ON lookup_history(created_at DESC);
-            CREATE INDEX IF NOT EXISTS idx_lookup_term ON lookup_history(lower(term));",
-        )
-        ?;
-        conn.pragma_update(None, "user_version", 12)
-            ?;
-        stored = 12;
-    }
-
-    if stored < 13 {
-        // Sidebar source priority: user-assignable ordering that both sorts the
-        // feed list and biases the home ranking (higher = surfaced earlier).
-        add_column_if_missing(
-            conn,
-            "ALTER TABLE feed_sources ADD COLUMN priority INTEGER NOT NULL DEFAULT 0",
-        )?;
-        conn.pragma_update(None, "user_version", 13)?;
-        stored = 13;
-    }
-
-    if stored < 14 {
-        // One-shot dead-feed cleanup support: unused fail counter column
-        // (kept for schema stability) + tombstones so curated sources removed
-        // by that pass are not resurrected by the next startup seed.
-        add_column_if_missing(
-            conn,
-            "ALTER TABLE feed_sources ADD COLUMN fail_count INTEGER NOT NULL DEFAULT 0",
-        )?;
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS removed_feeds (
-                 id TEXT PRIMARY KEY,
-                 removed_at TEXT NOT NULL
-             );",
-        )?;
-        conn.pragma_update(None, "user_version", 14)?;
-        stored = 14;
-    }
-
-    if stored < 15 {
-        // 好句摘录：单句 + 出处快照（见 docs/superpowers/specs/
-        // 2026-09-26-saved-sentence-design.md）。不接复习链路。
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS saved_sentences (
-                id TEXT PRIMARY KEY,
-                article_id TEXT,
-                quote TEXT NOT NULL,
-                para_index INTEGER NOT NULL DEFAULT -1,
-                source_title TEXT NOT NULL DEFAULT '',
-                source_url TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL
-             );
-             CREATE INDEX IF NOT EXISTS idx_sentences_created ON saved_sentences(created_at DESC);",
-        )?;
-        conn.pragma_update(None, "user_version", 15)?;
-        stored = 15;
-    }
-
-    if stored < 16 {
-        // 好句摘录功能取消：v15 建的表在此退场。已存摘录随表删除，不做迁移
-        // 保留（该功能从未发布 UI，无用户依赖）。
-        conn.execute_batch(
-            "DROP TABLE IF EXISTS saved_sentences;",
-        )?;
-        conn.pragma_update(None, "user_version", 16)?;
-        stored = 16;
-    }
-
-    if stored < 17 {
-        // 主题标签子系统取消（自建分类代替）：v7 加的列在此退场。已有标签
-        // 数据随列删除；排序改走来源/分类亲和度，不再读标签。
-        // DROP COLUMN 要求 SQLite 3.35+；bundled 版本满足，旧列缺失时
-        // （极端历史库）ALTER 报错则忽略——列不存在即已达成目标。
-        if let Err(e) = conn.execute("ALTER TABLE articles DROP COLUMN tags_json", []) {
-            let msg = e.to_string();
-            if !msg.contains("no such column") {
-                return Err(AppError::from(e));
-            }
-        }
-        conn.pragma_update(None, "user_version", 17)?;
-        stored = 17;
-    }
-
-    if stored < 18 {
-        // 沉寂源自动退场：记录每源最近一次产出新文章的时间，滚动 30 天
-        // 无新文章的启用源在刷新末尾被清退（精选删除、用户停用，
-        // 见 feeds::prune_stale_feeds）。存量回填：有文章的源取该源最新
-        // 文章的 fetched_at；从未出过文章的源记为迁移当下，给 30 天观察期。
-        add_column_if_missing(
-            conn,
-            "ALTER TABLE feed_sources ADD COLUMN last_new_article_at TEXT",
-        )?;
-        // Backfill from articles only when the column exists (synthetic /
-        // legacy test databases may lack it); those fall through to the
-        // observation-window stamp below.
-        let has_fetched_at: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('articles') WHERE name='fetched_at'",
-            [],
-            |row| row.get(0),
-        )?;
-        if has_fetched_at == 1 {
-            conn.execute(
-                "UPDATE feed_sources SET last_new_article_at = (
-                     SELECT MAX(a.fetched_at) FROM articles a WHERE a.source = feed_sources.name
-                 ) WHERE last_new_article_at IS NULL",
-                [],
-            )?;
-        }
-        let now = chrono::Utc::now().to_rfc3339();
-        conn.execute(
-            "UPDATE feed_sources SET last_new_article_at = ?1 WHERE last_new_article_at IS NULL",
-            [now],
-        )?;
-        conn.pragma_update(None, "user_version", 18)?;
-        stored = 18;
     }
 
     if stored < LATEST_VERSION {
@@ -992,86 +803,5 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), AppError> {
             "incomplete schema migration: user_version={stored}, expected {LATEST_VERSION}"
         )));
     }
-    Ok(())
-}
-
-/// v2 migration helper: keep the oldest row per case-insensitive term so the
-/// unique index can be added. Operates on the pre-v10 `vocab` table.
-fn collapse_duplicate_vocab_terms(conn: &Connection) -> Result<(), AppError> {
-    conn.execute(
-        "DELETE FROM vocab WHERE rowid NOT IN (
-            SELECT MIN(rowid) FROM vocab GROUP BY lower(term)
-        )",
-        [],
-    )?;
-    Ok(())
-}
-
-/// Rebuild translations/vocab with article FKs. SQLite cannot ADD CONSTRAINT.
-fn apply_v3_foreign_keys(conn: &Connection) -> Result<(), AppError> {
-    conn.execute_batch("PRAGMA foreign_keys = OFF;")
-        ?;
-    conn.execute_batch(
-        r#"
-        BEGIN;
-        DELETE FROM translations WHERE article_id NOT IN (SELECT id FROM articles);
-        UPDATE vocab SET article_id = NULL
-          WHERE article_id IS NOT NULL
-            AND article_id NOT IN (SELECT id FROM articles);
-
-        CREATE TABLE translations_new (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            article_id TEXT NOT NULL,
-            scope TEXT NOT NULL,
-            scope_key TEXT NOT NULL,
-            source_text TEXT NOT NULL,
-            translated_text TEXT NOT NULL,
-            model TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            UNIQUE(article_id, scope, scope_key),
-            FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE CASCADE
-        );
-        INSERT INTO translations_new
-            (id, article_id, scope, scope_key, source_text, translated_text, model, created_at)
-        SELECT id, article_id, scope, scope_key, source_text, translated_text, model, created_at
-          FROM translations;
-        DROP TABLE translations;
-        ALTER TABLE translations_new RENAME TO translations;
-        CREATE INDEX IF NOT EXISTS idx_translations_article ON translations(article_id);
-
-        CREATE TABLE vocab_new (
-            id TEXT PRIMARY KEY,
-            term TEXT NOT NULL,
-            definition_zh TEXT NOT NULL,
-            word_type TEXT NOT NULL,
-            collocations_json TEXT NOT NULL DEFAULT '[]',
-            context_sentence TEXT NOT NULL DEFAULT '',
-            article_id TEXT,
-            status TEXT NOT NULL DEFAULT 'learning',
-            interval_days REAL NOT NULL DEFAULT 0,
-            reps INTEGER NOT NULL DEFAULT 0,
-            consecutive_know INTEGER NOT NULL DEFAULT 0,
-            next_review_at TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE SET NULL
-        );
-        INSERT INTO vocab_new
-            (id, term, definition_zh, word_type, collocations_json, context_sentence,
-             article_id, status, interval_days, reps, consecutive_know, next_review_at, created_at)
-        SELECT id, term, definition_zh, word_type, collocations_json, context_sentence,
-               article_id, status, interval_days, reps, consecutive_know, next_review_at, created_at
-          FROM vocab;
-        DROP TABLE vocab;
-        ALTER TABLE vocab_new RENAME TO vocab;
-        CREATE INDEX IF NOT EXISTS idx_vocab_status ON vocab(status);
-        CREATE INDEX IF NOT EXISTS idx_vocab_next ON vocab(next_review_at);
-        CREATE INDEX IF NOT EXISTS idx_vocab_article ON vocab(article_id);
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_vocab_term_lower ON vocab(lower(term));
-        COMMIT;
-        "#,
-    )
-    ?;
-    conn.execute_batch("PRAGMA foreign_keys = ON;")
-        ?;
     Ok(())
 }

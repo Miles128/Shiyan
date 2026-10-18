@@ -1,4 +1,4 @@
-//! Import local `.txt` / `.pdf` / `.docx` files as articles.
+//! Import local `.txt` / `.md` / `.pdf` / `.docx` files as articles.
 
 use crate::db::{self, Article, DbState};
 use crate::error::AppError;
@@ -16,6 +16,8 @@ const MAX_FILE_BYTES: u64 = 20 * 1024 * 1024;
 const MAX_DECOMPRESSED_BYTES: u64 = 50 * 1024 * 1024;
 
 static RE_BLANK_RUN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n{3,}").unwrap());
+
+const UNSUPPORTED_FORMAT: &str = "暂不支持该格式（仅 .txt / .md / .pdf / .docx）";
 
 pub fn import_article_from_file(db: &DbState, path: &str) -> Result<Article, AppError> {
     let raw = PathBuf::from(path.trim());
@@ -35,8 +37,11 @@ pub fn import_article_from_file(db: &DbState, path: &str) -> Result<Article, App
         .unwrap_or("")
         .to_ascii_lowercase();
     // "doc" passes through to its dedicated hint below.
-    if !matches!(ext.as_str(), "txt" | "pdf" | "docx" | "doc") {
-        return Err("暂不支持该格式（仅 .txt / .pdf / .docx）".into());
+    if !matches!(
+        ext.as_str(),
+        "txt" | "md" | "markdown" | "pdf" | "docx" | "doc"
+    ) {
+        return Err(UNSUPPORTED_FORMAT.into());
     }
 
     let meta = std::fs::metadata(&path).map_err(|e| format!("无法读取文件：{e}"))?;
@@ -49,11 +54,14 @@ pub fn import_article_from_file(db: &DbState, path: &str) -> Result<Article, App
     // down the command thread.
     let content_text = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         match ext.as_str() {
-            "txt" => extract_txt(&bytes),
+            // Markdown is read verbatim: the reader renders it via
+            // react-markdown, and the `.md` suffix on the synthetic url is
+            // what makes that rendering deterministic (see `urlLooksLikeMarkdown`).
+            "txt" | "md" | "markdown" => extract_txt(&bytes),
             "pdf" => extract_pdf(&bytes),
             "docx" => extract_docx(&bytes),
             "doc" => Err(AppError::msg("暂不支持旧版 .doc，请另存为 .docx")),
-            _ => Err(AppError::msg("暂不支持该格式（仅 .txt / .pdf / .docx）")),
+            _ => Err(AppError::msg(UNSUPPORTED_FORMAT)),
         }
     }))
     .map_err(|_| AppError::msg("文件解析失败：文件损坏或格式不支持"))??;
@@ -69,9 +77,15 @@ pub fn import_article_from_file(db: &DbState, path: &str) -> Result<Article, App
     }
 
     let id = Uuid::new_v4().to_string();
+    // The synthetic url doubles as the Markdown render hint on the frontend
+    // (`urlLooksLikeMarkdown`), so keep the original extension on it.
+    let ext_suffix = match ext.as_str() {
+        "md" | "markdown" => ".md",
+        _ => "",
+    };
     let article = Article {
         id: id.clone(),
-        url: format!("file://import/{id}"),
+        url: format!("file://import/{id}{ext_suffix}"),
         title,
         source: "导入".into(),
         category: "other".into(),
@@ -278,6 +292,35 @@ mod tests {
         assert_eq!(article.category, "other");
         assert!(article.url.starts_with("file://import/"));
         assert!(article.content_text.chars().count() >= MIN_IMPORTED_BODY_CHARS);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_markdown_file_keeps_syntax_and_md_url() {
+        let dir = std::env::temp_dir().join(format!("shiyan-import-md-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("notes.md");
+        let body = format!(
+            "# Heading\n\nSome **bold** prose about economics and markets.\n\n{}",
+            "The committee reviewed the disinflation trend across the eurozone. "
+                .repeat(12)
+        );
+        std::fs::write(&path, body.as_bytes()).unwrap();
+
+        let db_path = dir.join("t.sqlite");
+        let db = db::DbState::open(db_path).unwrap();
+
+        let article = import_article_from_file(&db, path.to_str().unwrap()).unwrap();
+        assert_eq!(article.title, "notes");
+        // Markdown syntax survives verbatim; the reader renders it via
+        // react-markdown, which needs the raw source.
+        assert!(article.content_text.starts_with("# Heading"));
+        assert!(article.content_text.contains("**bold**"));
+        // The `.md` suffix on the synthetic url is what makes
+        // `urlLooksLikeMarkdown` fire deterministically.
+        assert!(article.url.ends_with(".md"), "{}", article.url);
+        assert_eq!(article.origin, "file");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

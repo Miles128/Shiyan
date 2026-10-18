@@ -1,10 +1,10 @@
-use crate::article_view;
-use crate::db::{self, Article, ArticleListItem, DbState, LearningStats, RankWindow, TranslationRow};
-use crate::error::AppError;
-use crate::feeds;
-use crate::import_file;
-use crate::translate;
-use crate::vocab;
+use shiyan_core::article_view;
+use shiyan_core::db::{self, Article, ArticleListItem, DbState, LearningStats, RankWindow, TranslationRow};
+use shiyan_core::error::AppError;
+use shiyan_core::feeds;
+use shiyan_core::import_file;
+use shiyan_core::translate;
+use shiyan_core::vocab;
 use tauri::{AppHandle, Emitter};
 
 /// Candidate window size for interest scoring. Wide enough that cursor pages can
@@ -101,7 +101,7 @@ pub async fn list_library(
 /// e.g. selecting a word on the home list). Goes through the LLM, no DB write.
 #[tauri::command]
 pub async fn translate_plain_text(text: String) -> Result<String, AppError> {
-    let cfg = crate::config::load_config()?;
+    let cfg = shiyan_core::config::load_config()?;
     crate::commands::spawn_blocking_err(move || vocab::translate_text(&cfg, &text)).await
 }
 
@@ -146,15 +146,30 @@ pub fn get_article_view(
     let Some(article) = article else {
         return Ok(None);
     };
-    let paragraphs = crate::feeds::split_paragraphs(&article.content_text);
+    let paragraphs = shiyan_core::feeds::split_paragraphs(&article.content_text);
     let translations = {
         let conn = state.lock_read()?;
         db::list_paragraph_translations(&conn, &id)?
+    };
+    // Chapter position for book chapters: same read-lock pattern, and only
+    // queried for chapters so ordinary articles pay nothing.
+    let book = if article.origin == "book" {
+        let conn = state.lock_read()?;
+        db::book_chapter_position(&conn, &id)?.map(|pos| article_view::BookContext {
+            title: article.source.clone(),
+            chapter_no: pos.chapter_no,
+            chapter_count: pos.chapter_count,
+            prev_id: pos.prev_id,
+            next_id: pos.next_id,
+        })
+    } else {
+        None
     };
     Ok(Some(article_view::ArticleView {
         article,
         paragraphs,
         translations,
+        book,
     }))
 }
 
@@ -171,7 +186,7 @@ pub fn mark_article_opened(
 #[tauri::command]
 pub fn get_reading_stats(
     state: tauri::State<'_, DbState>,
-) -> Result<crate::db::ReadingStats, AppError> {
+) -> Result<shiyan_core::db::ReadingStats, AppError> {
     let conn = state.lock_read()?;
     db::reading_stats(&conn)
 }
@@ -191,7 +206,7 @@ pub async fn translate_paragraph(
     paragraph_index: usize,
     text: String,
 ) -> Result<TranslationRow, AppError> {
-    let cfg = crate::config::load_config()?;
+    let cfg = shiyan_core::config::load_config()?;
     crate::commands::spawn_db(app, move |state| {
         translate::translate_and_cache(
             state,
@@ -211,7 +226,7 @@ pub async fn translate_selection(
     article_id: String,
     text: String,
 ) -> Result<TranslationRow, AppError> {
-    let cfg = crate::config::load_config()?;
+    let cfg = shiyan_core::config::load_config()?;
     crate::commands::spawn_db(app, move |state| {
         let scope_key = translate::stable_scope_key(&text);
         translate::translate_and_cache(
@@ -231,7 +246,7 @@ pub async fn translate_full_article(
     app: AppHandle,
     article_id: String,
 ) -> Result<translate::FullTranslateResult, AppError> {
-    let cfg = crate::config::load_config()?;
+    let cfg = shiyan_core::config::load_config()?;
     let emit_app = app.clone();
     crate::commands::spawn_db(app, move |state| {
         translate::translate_full_article(
@@ -248,7 +263,7 @@ pub async fn translate_full_article(
 
 #[tauri::command]
 pub async fn fill_missing_card_zh(app: AppHandle) -> Result<usize, AppError> {
-    let cfg = crate::config::load_config()?;
+    let cfg = shiyan_core::config::load_config()?;
     if cfg.api_key.trim().is_empty() {
         return Ok(0);
     }

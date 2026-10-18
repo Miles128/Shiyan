@@ -1,5 +1,5 @@
-use crate::config::{self, AppConfig};
-use crate::error::AppError;
+use shiyan_core::config::{self, AppConfig};
+use shiyan_core::error::AppError;
 
 #[tauri::command]
 pub fn get_config() -> Result<AppConfig, AppError> {

@@ -9,6 +9,7 @@
 import {
   cefrStepsAbove,
   FREQ_BANDS,
+  isOutOfLexiconHard,
   lookupWord,
   normalizeKey,
   type DifficultyPrefs,
@@ -126,8 +127,13 @@ function bandOf(rank: number): FreqBand {
 /**
  * Weight of a word outside the comfort zone: `1 + 0.5·(steps above)`, where
  * steps is the worse of the frequency-band gap and the CEFR gap — the same
- * OR-rule as the underline (`isHardWord`). 0 only when inside both; 0.5 for
- * OOV (names / unlisted words are not evidence of difficulty).
+ * OR-rule as the underline (`isHardWord`). 0 only when inside both.
+ *
+ * A word the lexicon does not carry is weighted as one step out of reach, the
+ * same verdict the reader now underlines it with (`isOutOfLexiconHard`) —
+ * `disinflation` / `sanctions` are advanced vocabulary and must not read as
+ * free just because the list has no headword for them. Short unknowns are
+ * skipped: inflections and typos are noise, not difficulty.
  */
 export function wordDifficultyWeight(
   term: string,
@@ -136,7 +142,7 @@ export function wordDifficultyWeight(
 ): number {
   if (learning) return 1.5;
   const entry = lookupWord(term);
-  if (!entry) return 0.5;
+  if (!entry) return isOutOfLexiconHard(term) ? 1 : 0;
   const bandSteps =
     entry.rank <= prefs.freqBand
       ? 0

@@ -207,7 +207,12 @@ pub struct RefreshProgress {
 }
 
 pub(crate) fn select_enabled_feeds(feeds: Vec<FeedSource>) -> Vec<FeedSource> {
-    feeds.into_iter().filter(|f| f.enabled).collect()
+    // Books are feeds only so the sidebar / source filter / article list work
+    // unchanged — they never fetch anything, so refresh must not touch them.
+    feeds
+        .into_iter()
+        .filter(|f| f.enabled && f.kind != "book")
+        .collect()
 }
 
 pub fn refresh_feeds(

@@ -1,7 +1,7 @@
-use crate::error::AppError;
-use crate::db::{self, DbState, FeedCategory, FeedSource};
-use crate::feeds::{self, FeedValidation, RefreshProgress, RefreshResult};
-use crate::vocab::{self, FeedDiscoverCandidate};
+use shiyan_core::error::AppError;
+use shiyan_core::db::{self, DbState, FeedCategory, FeedSource};
+use shiyan_core::feeds::{self, FeedValidation, RefreshProgress, RefreshResult};
+use shiyan_core::vocab::{self, FeedDiscoverCandidate};
 use tauri::{AppHandle, Emitter};
 
 #[tauri::command]
@@ -97,7 +97,7 @@ pub async fn discover_feeds(
     app: AppHandle,
     category_id: String,
 ) -> Result<Vec<FeedDiscoverCandidate>, AppError> {
-    let cfg = crate::config::load_config()?;
+    let cfg = shiyan_core::config::load_config()?;
     crate::commands::spawn_db(app, move |state| {
         let cat = {
             let conn = state.lock_read()?;
@@ -141,7 +141,7 @@ pub async fn refresh_feeds(app: AppHandle) -> Result<RefreshResult, AppError> {
         },
     );
 
-    let cfg = crate::config::load_config()?;
+    let cfg = shiyan_core::config::load_config()?;
     let emit_app = app.clone();
     crate::commands::spawn_db(app, move |state| {
         feeds::refresh_feeds(

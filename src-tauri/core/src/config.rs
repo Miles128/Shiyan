@@ -54,8 +54,9 @@ pub struct AppConfig {
     #[serde(default = "default_article_retention_days")]
     pub article_retention_days: u32,
     /// Show a small Chinese gloss beneath "super-hard" words while reading
-    /// (≥2 CEFR steps above the user's level, or frequency rank past 2× the
-    /// band). Off = the reader stays as clean as before; underline still works.
+    /// (CEFR ≥2 levels above the user's level; proper nouns use their
+    /// name gloss). Off = the reader stays as clean as before; underline
+    /// still works. Evaluated in the frontend (`isSuperHardWord`).
     #[serde(default = "default_show_hard_word_gloss")]
     pub show_hard_word_gloss: bool,
 }

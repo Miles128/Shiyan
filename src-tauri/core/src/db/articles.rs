@@ -63,7 +63,7 @@ pub struct ArticleQuery<'a> {
 }
 
 /// Escape LIKE metacharacters so a user query is always literal.
-fn escape_like_literal(q: &str) -> String {
+pub(crate) fn escape_like_literal(q: &str) -> String {
     let mut out = String::with_capacity(q.len());
     for c in q.chars() {
         if c == '%' || c == '_' || c == '\\' {
@@ -128,8 +128,13 @@ pub fn query_articles(
     }
     // Recency for every caller: the library shows newest first, and the ranked
     // home feed needs the fetched window to be recent rather than starved by
-    // alphabetical source ordering.
-    sql.push_str(" ORDER BY fetched_at DESC, published_at DESC, id ASC");
+    // alphabetical source ordering. `chapter_no` breaks the tie inside one
+    // imported book: every chapter shares the same `fetched_at`, so without it
+    // a book's chapters would land in uuid order. NULL sorts as 0, which keeps
+    // ordinary articles on the old fetched_at/id ordering.
+    sql.push_str(
+        " ORDER BY fetched_at DESC, published_at DESC, IFNULL(chapter_no,0) ASC, id ASC",
+    );
     sql.push_str(" LIMIT ? OFFSET ?");
     params.push(rusqlite::types::Value::Integer(
         limit.unwrap_or(60).clamp(1, MAX_LIST_LIMIT),
@@ -838,7 +843,100 @@ pub fn delete_article(conn: &Connection, id: &str) -> Result<(), AppError> {
 }
 
 pub fn articles_missing_card_zh(conn: &Connection, limit: usize) -> Result<Vec<Article>, AppError> {
-    recent_articles_where(conn, "IFNULL(summary_zh,'') = ''", limit)
+    // Book chapters are excluded on purpose: a single imported book can add
+    // hundreds of rows, and every one of them would otherwise eat a slot in
+    // the LLM backfill budget for months. Chapters carry no blurb.
+    recent_articles_where(
+        conn,
+        "IFNULL(summary_zh,'') = '' AND origin <> 'book'",
+        limit,
+    )
+}
+
+/// Insert one book chapter. Same idempotency as [`insert_article_if_new`] (url
+/// UNIQUE) but stamps `chapter_no`, which the RSS/import insert leaves NULL.
+pub fn insert_book_chapter(
+    conn: &Connection,
+    a: &Article,
+    chapter_no: i64,
+) -> Result<bool, AppError> {
+    let changed = conn
+        .execute(
+            "INSERT INTO articles (id,url,title,source,category,published_at,content_text,fetched_at,origin,summary_zh,word_count,quality,extraction_source,chapter_no)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
+             ON CONFLICT(url) DO NOTHING",
+            params![
+                a.id,
+                a.url,
+                a.title,
+                a.source,
+                a.category,
+                a.published_at,
+                a.content_text,
+                a.fetched_at,
+                a.origin,
+                a.summary_zh,
+                a.word_count,
+                a.quality,
+                a.extraction_source,
+                chapter_no,
+            ],
+        )?;
+    Ok(changed > 0)
+}
+
+/// Where a chapter sits inside its book, with the neighbour ids the reader's
+/// chapter bar navigates to. `None` for anything that is not a chapter.
+#[derive(Debug, Clone)]
+pub struct BookChapterPos {
+    pub chapter_no: i64,
+    pub chapter_count: i64,
+    pub prev_id: Option<String>,
+    pub next_id: Option<String>,
+}
+
+pub fn book_chapter_position(
+    conn: &Connection,
+    article_id: &str,
+) -> Result<Option<BookChapterPos>, AppError> {
+    let head: Option<(i64, String)> = conn
+        .query_row(
+            "SELECT chapter_no, url FROM articles
+              WHERE id=?1 AND origin='book' AND chapter_no IS NOT NULL",
+            params![article_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((chapter_no, url)) = head else {
+        return Ok(None);
+    };
+    // Neighbours are matched by url prefix, not by book name: chapter urls are
+    // `<book url>#ch-<n>`, so two books that happen to share a title still
+    // resolve to their own chapters.
+    let Some((base, _)) = url.split_once("#ch-") else {
+        return Ok(None);
+    };
+    let prefix = format!("{base}#ch-");
+    let chapter_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM articles WHERE url LIKE ?1 || '%'",
+        params![prefix],
+        |row| row.get(0),
+    )?;
+    let at = |n: i64| -> Result<Option<String>, AppError> {
+        conn.query_row(
+            "SELECT id FROM articles WHERE url = ?1 || ?2",
+            params![prefix, n.to_string()],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(AppError::from)
+    };
+    Ok(Some(BookChapterPos {
+        chapter_no,
+        chapter_count,
+        prev_id: at(chapter_no - 1)?,
+        next_id: at(chapter_no + 1)?,
+    }))
 }
 
 /// RSS articles whose stored body has no paragraph breaks (extraction loss),

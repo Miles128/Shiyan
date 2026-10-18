@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useShell } from "../store";
+import { useFeeds, useFilters } from "../store";
 import { useToast } from "./Toaster";
 import { api, type FeedCategory } from "../api";
 import { groupSidebarFeeds, type SidebarGroup } from "../sidebarDerived";
@@ -9,6 +9,7 @@ const CATEGORY_COLOR: Record<string, string> = {
   tech: "#0f5c4c",
   finance: "#b58105",
   world: "#2f5d8a",
+  book: "#7a4fa3",
   other: "#6f6a63",
 };
 /** Extra accents for user-created categories, picked deterministically. */
@@ -53,13 +54,8 @@ type Props = {
  * ranking bonus — the row simply returns to its count-sorted slot on drop).
  */
 export default function Sidebar({ collapsed, onExpand }: Props) {
-  const {
-    feeds,
-    reloadFeeds,
-    commitFeedOrder,
-    focusSource,
-    setFocusSource,
-  } = useShell();
+  const { feeds, reloadFeeds, commitFeedOrder } = useFeeds();
+  const { focusSource, setFocusSource } = useFilters();
   const toast = useToast();
 
   // Categories are DB-driven (built-ins + user-created), and article counts
