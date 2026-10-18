@@ -4,7 +4,6 @@ import {
   applyTranslateProgress,
   categoryLabel,
   clipContext,
-  contentLooksLikeMarkdown,
   findContext,
   shouldRenderMarkdown,
   translateProgressLabel,
@@ -126,34 +125,22 @@ describe("translateProgressLabel", () => {
   });
 });
 
-describe("urlLooksLikeMarkdown", () => {
-  it("detects .md and .markdown paths", () => {
+describe("markdown rendering", () => {
+  it("detects markdown from the URL, falling back to the raw string", () => {
     expect(urlLooksLikeMarkdown("https://ex.com/notes.md")).toBe(true);
     expect(urlLooksLikeMarkdown("https://ex.com/a.markdown?x=1")).toBe(true);
-  });
-
-  it("rejects non-markdown URLs", () => {
+    // Unparseable as a URL: the heuristic still sees the extension.
+    expect(urlLooksLikeMarkdown("notes.md")).toBe(true);
     expect(urlLooksLikeMarkdown("https://ex.com/story.html")).toBe(false);
   });
 
-  it("falls back to the raw string when URL parsing fails", () => {
-    expect(urlLooksLikeMarkdown("notes.md")).toBe(true);
-  });
-});
-
-describe("contentLooksLikeMarkdown", () => {
-  it("needs two heuristic hits, or a strong single signal", () => {
-    expect(contentLooksLikeMarkdown("Just a plain paragraph.")).toBe(false);
-    expect(contentLooksLikeMarkdown("# Title\n\n- item one")).toBe(true);
-    expect(contentLooksLikeMarkdown("```\ncode\n```")).toBe(true);
-    expect(contentLooksLikeMarkdown("# One\n\n# Two")).toBe(true);
-  });
-});
-
-describe("shouldRenderMarkdown", () => {
-  it("is true when either the URL or the body looks like markdown", () => {
+  it("renders markdown when either the URL or the body signals it", () => {
     expect(shouldRenderMarkdown("https://ex.com/a.md", "plain")).toBe(true);
-    expect(shouldRenderMarkdown("https://ex.com/a.html", "# A\n\n# B")).toBe(
+    // Body signals: one strong hit (code fence) or two weak ones (headings).
+    expect(shouldRenderMarkdown("https://ex.com/a.html", "```\ncode\n```")).toBe(
+      true,
+    );
+    expect(shouldRenderMarkdown("https://ex.com/a.html", "# One\n\n# Two")).toBe(
       true,
     );
     expect(shouldRenderMarkdown("https://ex.com/a.html", "plain")).toBe(false);

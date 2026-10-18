@@ -39,7 +39,6 @@ export function defaultAppConfig(): RustAppConfig {
     base_url: "https://api.openai.com/v1",
     api_key: "",
     model: "gpt-4o-mini",
-    disabled_feeds: [],
     cefr_level: "B1",
     freq_band: 3000,
     vocab_placement_done: false,

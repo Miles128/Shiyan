@@ -13,8 +13,6 @@ pub struct AppConfig {
     pub api_key: String,
     #[serde(default)]
     pub model: String,
-    #[serde(default)]
-    pub disabled_feeds: Vec<String>,
     /// User CEFR level (A1–C2). Words above this are underlined when reading.
     #[serde(default = "default_cefr_level")]
     pub cefr_level: String,
@@ -103,7 +101,6 @@ impl Default for AppConfig {
             base_url: "https://api.openai.com/v1".into(),
             api_key: String::new(),
             model: "gpt-4o-mini".into(),
-            disabled_feeds: vec![],
             cefr_level: default_cefr_level(),
             freq_band: default_freq_band(),
             vocab_placement_done: false,
@@ -194,16 +191,13 @@ fn read_config_file() -> Result<AppConfig, AppError> {
 }
 
 pub fn save_config(cfg: &AppConfig) -> Result<(), AppError> {
-    let mut cfg = cfg.clone();
-    // Legacy field: enablement lives on feed_sources.enabled only.
-    cfg.disabled_feeds.clear();
     let path = config_path();
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent)?;
         }
     }
-    let raw = serde_json::to_string_pretty(&cfg)?;
+    let raw = serde_json::to_string_pretty(cfg)?;
     fs::write(&path, raw)?;
     // Keys live here — lock it down to the owner only.
     #[cfg(unix)]
@@ -235,7 +229,6 @@ mod tests {
         assert_eq!(cfg.reader_line_width, "full");
         assert_eq!(cfg.cefr_level, "B1");
         assert_eq!(cfg.freq_band, 3000);
-        assert!(cfg.disabled_feeds.is_empty());
         // Gloss-under-hard-word is a "helpful by default" reading aid.
         assert!(cfg.show_hard_word_gloss);
     }
@@ -250,17 +243,5 @@ mod tests {
         }"#;
         let cfg: AppConfig = serde_json::from_str(raw).unwrap();
         assert!(!cfg.show_hard_word_gloss);
-    }
-
-    #[test]
-    fn legacy_disabled_feeds_still_deserialize() {
-        let raw = r#"{
-            "base_url": "https://api.openai.com/v1",
-            "api_key": "x",
-            "model": "gpt-4o-mini",
-            "disabled_feeds": ["vox"]
-        }"#;
-        let cfg: AppConfig = serde_json::from_str(raw).unwrap();
-        assert_eq!(cfg.disabled_feeds, vec!["vox"]);
     }
 }

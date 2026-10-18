@@ -1629,21 +1629,6 @@ fn repair_target_selection_and_body_replacement() {
 }
 
 #[test]
-fn apply_legacy_disabled_feeds_sets_enabled_false() {
-    let tmp = TmpDb::new("disabled");
-    let conn = tmp.conn();
-    let some = db::list_feeds(&conn).unwrap().into_iter().next().expect("seed");
-    assert!(some.enabled);
-    db::apply_legacy_disabled_feeds(&conn, &[some.id.clone()]).unwrap();
-    let after = db::list_feeds(&conn)
-        .unwrap()
-        .into_iter()
-        .find(|f| f.id == some.id)
-        .unwrap();
-    assert!(!after.enabled);
-}
-
-#[test]
 fn article_foreign_keys_cascade_and_reject_orphans() {
     let tmp = TmpDb::new("fk");
     let conn = tmp.conn();
@@ -1987,67 +1972,6 @@ fn export_memory_csv_dumps_all_libraries_with_escaping() {
         csv.trim_start_matches('\u{FEFF}'),
         "term,kind,status,definition_zh,word_type,collocations,context_sentence,created_at,next_review_at,reps,interval_days\n"
     );
-
-}
-
-#[test]
-fn bundle_id_rename_adopts_legacy_data_dir_once() {
-    let tmp = TmpDb::new("bundle");
-    let parent = tmp.dir();
-    let legacy = parent.join("com.sihai.learnenglish");
-    let current = parent.join("com.sihai.shiyan");
-    std::fs::create_dir_all(&legacy).unwrap();
-    std::fs::write(legacy.join("learnenglish.db"), b"fake-db").unwrap();
-    std::fs::write(legacy.join("learnenglish.db-wal"), b"fake-wal").unwrap();
-    std::fs::write(legacy.join("config.local.json"), b"{}").unwrap();
-
-    let copied = db::migrate_legacy_app_dir(&current).unwrap();
-    assert_eq!(copied, 3, "db + wal + config move over");
-    // DB files are adopted under the new name; config keeps its own name.
-    assert_eq!(
-        std::fs::read(current.join("shiyan.db")).unwrap(),
-        b"fake-db"
-    );
-    assert_eq!(
-        std::fs::read(current.join("shiyan.db-wal")).unwrap(),
-        b"fake-wal"
-    );
-    assert!(current.join("config.local.json").exists());
-    // Copy, never move: the old dir stays as a backup.
-    assert!(legacy.join("learnenglish.db").exists());
-
-    // Second run is a no-op and never overwrites new data.
-    std::fs::write(current.join("shiyan.db"), b"new-db").unwrap();
-    assert_eq!(db::migrate_legacy_app_dir(&current).unwrap(), 0);
-    assert_eq!(std::fs::read(current.join("shiyan.db")).unwrap(), b"new-db");
-
-    // No legacy dir at all is also a no-op.
-    let bare_parent = tmp.dir().join("bare");
-    let fresh = bare_parent.join("com.sihai.shiyan");
-    assert_eq!(db::migrate_legacy_app_dir(&fresh).unwrap(), 0);
-}
-
-#[test]
-fn db_file_rename_happens_in_place_and_is_idempotent() {
-    // Already on the new bundle id, but the DB still carries the legacy name.
-    let tmp = TmpDb::new("dbfile");
-    let dir = tmp.dir();
-    std::fs::write(dir.join("learnenglish.db"), b"fake-db").unwrap();
-    std::fs::write(dir.join("learnenglish.db-wal"), b"fake-wal").unwrap();
-    std::fs::write(dir.join("learnenglish.db.premigrate-v10.bak"), b"old").unwrap();
-    std::fs::write(dir.join("config.local.json"), b"{}").unwrap();
-
-    assert_eq!(db::migrate_legacy_app_dir(&dir).unwrap(), 3);
-    assert_eq!(std::fs::read(dir.join("shiyan.db")).unwrap(), b"fake-db");
-    assert_eq!(std::fs::read(dir.join("shiyan.db-wal")).unwrap(), b"fake-wal");
-    assert!(dir.join("shiyan.db.premigrate-v10.bak").exists());
-    // Legacy names are gone and unrelated files are untouched.
-    assert!(!dir.join("learnenglish.db").exists());
-    assert!(!dir.join("learnenglish.db-wal").exists());
-    assert!(dir.join("config.local.json").exists());
-
-    // Rerun is a no-op once the new-named DB exists.
-    assert_eq!(db::migrate_legacy_app_dir(&dir).unwrap(), 0);
 
 }
 

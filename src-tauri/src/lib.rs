@@ -4,7 +4,7 @@ mod commands;
 // tauri-free by construction (a `use tauri::` there fails to compile). Both the
 // setup glue below and the command layer reference it as `shiyan_core::…`.
 // `reflow` stays core-internal: only `feeds` and core tests call it.
-use shiyan_core::{config, db, feeds};
+use shiyan_core::{db, feeds};
 
 use tauri::Manager;
 
@@ -15,23 +15,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
-            // First launch after the bundle-id rename: adopt the old data
-            // dir (best-effort; old data is never deleted). Runs before the
-            // restore swap so a staged restore moves over too.
-            let _ = db::migrate_legacy_app_dir(&dir);
             // Swap in a staged restore file (if any) before connections open.
             db::apply_pending_restore(&dir)?;
             let state = db::DbState::open(db::db_path(dir))?;
-            {
-                let mut cfg = config::load_config()?;
-                if !cfg.disabled_feeds.is_empty() {
-                    let conn = state.lock_write()?;
-                    db::apply_legacy_disabled_feeds(&conn, &cfg.disabled_feeds)?;
-                    drop(conn);
-                    cfg.disabled_feeds.clear();
-                    config::save_config(&cfg)?;
-                }
-            }
             {
                 // Drop empty articles, stamp never-measured word counts, and
                 // remove link roundups / podcast transcripts already stored.

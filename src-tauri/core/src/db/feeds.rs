@@ -167,17 +167,6 @@ pub fn category_priority_max(
     Ok(rows)
 }
 
-/// One-shot import of the legacy `config.disabled_feeds` list onto DB `enabled`.
-pub fn apply_legacy_disabled_feeds(conn: &Connection, ids: &[String]) -> Result<(), AppError> {
-    for id in ids {
-        let id = id.trim();
-        if !id.is_empty() {
-            set_feed_enabled(conn, id, false)?;
-        }
-    }
-    Ok(())
-}
-
 pub fn list_feed_categories(conn: &Connection) -> Result<Vec<FeedCategory>, AppError> {
     let mut stmt = conn
         .prepare("SELECT id,label,builtin FROM feed_categories ORDER BY builtin DESC, label")
