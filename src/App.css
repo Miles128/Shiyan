@@ -1022,13 +1022,6 @@ a.brand-mini:hover {
   opacity: 0.55;
 }
 
-.learning-insight {
-  margin: 0 0 12px;
-  color: var(--muted);
-  font-size: 0.92rem;
-  line-height: 1.5;
-}
-
 .article-row h2 {
   margin: 8px 0;
   font-size: 1.2rem;
@@ -1877,14 +1870,6 @@ details.settings-section > summary {
   margin: 0;
 }
 
-.feed-row {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  padding: 8px 0;
-  flex-direction: row;
-}
-
 .empty {
   padding: 28px;
   border: none;
@@ -1970,20 +1955,6 @@ details.settings-section > summary {
 }
 
 .feeds-page {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.feeds-drawer {
-  position: relative;
-  width: min(440px, 100%);
-  height: 100%;
-  overflow: auto;
-  background: var(--panel);
-  border-left: 1px solid var(--line);
-  box-shadow: var(--shadow);
-  padding: 20px 18px 40px;
   display: flex;
   flex-direction: column;
   gap: 16px;

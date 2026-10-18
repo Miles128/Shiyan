@@ -74,16 +74,11 @@ pub(crate) fn rss_trust_chars(fulltext_ratio: f64) -> usize {
     }
 }
 
-/// Why a candidate page never became a library entry. The refresh pipeline
+/// Why a fetched body never became a library entry. The refresh pipeline
 /// folds all of these into one "too short" counter, which makes a source that
-/// needs a real browser look identical to one that is simply thin — so the
-/// coverage audit needs them apart.
+/// needs a real browser look identical to one that is simply thin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PageFailure {
-    /// Request failed or the server refused us (non-2xx, timeout, oversized body).
-    FetchFailed,
-    /// Blocked behind a subscription prompt — deliberately never ingested.
-    Paywall,
     /// Answered fine but yielded almost no text: a client-side-rendered shell.
     Shell,
     /// Real prose, under the minimum length.
@@ -95,11 +90,9 @@ pub(crate) enum PageFailure {
 }
 
 impl PageFailure {
-    /// Label used in the coverage report.
+    /// Short label for logs and diagnostics.
     pub(crate) const fn label(self) -> &'static str {
         match self {
-            PageFailure::FetchFailed => "抓取失败或被拒",
-            PageFailure::Paywall => "疑似付费墙",
             PageFailure::Shell => "空壳页（正文靠脚本渲染）",
             PageFailure::TooShort => "正文过短",
             PageFailure::NavOrLinks => "导航或链接堆",

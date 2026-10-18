@@ -76,17 +76,20 @@ fn chat_parsed<T>(
     label: &str,
     parse: impl Fn(&str) -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let raw = chat_json_mode(cfg, system, user)?;
+    // JSON output mode: one-shot parseable responses, no parse-failure retry
+    // round-trips (the retry below stays as a fallback).
+    let raw = chat_body(cfg, system, user, true)?;
     match parse(&raw) {
         Ok(v) => Ok(v),
         Err(first_err) => {
             let first_err = first_err.to_string();
-            let raw2 =
-                chat_json_mode(cfg, system, &format!("{user}{JSON_REMINDER}")).map_err(|e| {
+            let raw2 = chat_body(cfg, system, &format!("{user}{JSON_REMINDER}"), true).map_err(
+                |e| {
                     AppError::msg(format!(
                         "{label}: first attempt failed to parse ({first_err}); retry request failed: {e}"
                     ))
-                })?;
+                },
+            )?;
             parse(&raw2).map_err(|e| {
                 AppError::msg(format!("parse {label}: {first_err}; retry also failed: {e}"))
             })
@@ -269,8 +272,6 @@ pub struct AddMemoryInput {
     pub collocations: Option<Vec<String>>,
 }
 
-/// Enrich (optional) and insert-or-merge a memory row (word or phrase).
-/// LLM failure degrades to whatever fields the caller supplied.
 /// Does this saved item still lack LLM-only fields (word_type / collocations,
 /// or a definition when the popover had none)? Used to decide whether a
 /// background enrichment round is worth an API call.
@@ -304,6 +305,18 @@ pub fn enrich_memory_fields(cfg: &AppConfig, item: &MemoryItem) -> Option<VocabE
     enrichment.ok()
 }
 
+/// Merge incoming collocations into a row's list: trimmed, non-empty,
+/// de-duplicated. Shared by the synchronous save and the background
+/// enrichment fill so both merge the same way.
+fn merge_collocations(existing: &mut Vec<String>, incoming: &[String]) {
+    for c in incoming {
+        let c = c.trim();
+        if !c.is_empty() && !existing.contains(&c.to_string()) {
+            existing.push(c.to_string());
+        }
+    }
+}
+
 /// Fill the still-empty fields of the stored row. The row may have been
 /// deleted or re-merged meanwhile; only touch it if it is still there, and
 /// only fill what is still empty. Returns the updated row so the caller can
@@ -322,12 +335,7 @@ pub fn apply_memory_enrichment(
     if updated.word_type.is_empty() {
         updated.word_type = enrichment.word_type.clone();
     }
-    for c in &enrichment.collocations {
-        let c = c.trim();
-        if !c.is_empty() && !updated.collocations.contains(&c.to_string()) {
-            updated.collocations.push(c.to_string());
-        }
-    }
+    merge_collocations(&mut updated.collocations, &enrichment.collocations);
     if db::update_memory_meta(conn, &updated).is_ok() {
         Ok(Some(updated))
     } else {
@@ -364,12 +372,7 @@ pub fn add_or_merge_memory(db: &DbState, input: AddMemoryInput) -> Result<Memory
         if existing.word_type.is_empty() || (kind == "phrase" && existing.word_type == "phrase") {
             existing.word_type = given_word_type;
         }
-        for c in &collocations {
-            let c = c.trim();
-            if !c.is_empty() && !existing.collocations.contains(&c.to_string()) {
-                existing.collocations.push(c.to_string());
-            }
-        }
+        merge_collocations(&mut existing.collocations, &collocations);
         if existing.context_sentence.is_empty() {
             existing.context_sentence = input.context_sentence.clone();
         }
@@ -486,12 +489,6 @@ pub fn chat_completions_url(base_url: &str) -> String {
 
 fn chat(cfg: &AppConfig, system: &str, user: &str) -> Result<String, AppError> {
     chat_body(cfg, system, user, false)
-}
-
-/// Chat with the provider's JSON output mode — one-shot parseable responses,
-/// no parse-failure retry round-trips (the retry stays as a fallback).
-fn chat_json_mode(cfg: &AppConfig, system: &str, user: &str) -> Result<String, AppError> {
-    chat_body(cfg, system, user, true)
 }
 
 fn chat_body(cfg: &AppConfig, system: &str, user: &str, json_mode: bool) -> Result<String, AppError> {

@@ -1,6 +1,6 @@
 //! Fetching a public article page and extracting title + main text.
 
-use super::filters::{body_defect, looks_like_paywall, PageFailure};
+use super::filters::{body_defect, looks_like_paywall};
 use super::net::{ensure_public_http_url, read_limited_bytes};
 use crate::error::AppError;
 use reqwest::blocking::Client;
@@ -49,10 +49,9 @@ pub(crate) struct ExtractedPage {
     pub text: String,
 }
 
-/// A page that never became an entry: the classified failure, plus the
-/// user-facing message this path has always produced.
+/// A page that never became an entry: the user-facing message this path has
+/// always produced.
 pub(crate) struct PageExtractError {
-    pub failure: PageFailure,
     pub detail: String,
 }
 
@@ -62,11 +61,10 @@ impl From<PageExtractError> for AppError {
     }
 }
 
-/// Build a classified page failure, keeping the message this path has always
-/// produced for the UI.
-fn fail(failure: PageFailure, detail: impl Into<String>) -> PageExtractError {
+/// Build a page failure, keeping the message this path has always produced
+/// for the UI.
+fn fail(detail: impl Into<String>) -> PageExtractError {
     PageExtractError {
-        failure,
         detail: detail.into(),
     }
 }
@@ -77,8 +75,7 @@ pub(crate) fn extract_page(
     client: &Client,
     url: &str,
 ) -> Result<ExtractedPage, PageExtractError> {
-    let parsed = ensure_public_http_url(url)
-        .map_err(|e| fail(PageFailure::FetchFailed, e.to_string()))?;
+    let parsed = ensure_public_http_url(url).map_err(|e| fail(e.to_string()))?;
     let response = client
         .get(url)
         .header(
@@ -86,17 +83,16 @@ pub(crate) fn extract_page(
             "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
         )
         .send()
-        .map_err(|e| fail(PageFailure::FetchFailed, format!("网络请求失败：{e}")))?
+        .map_err(|e| fail(format!("网络请求失败：{e}")))?
         .error_for_status()
-        .map_err(|e| fail(PageFailure::FetchFailed, format!("网络请求失败：{e}")))?;
-    let bytes = read_limited_bytes(response)
-        .map_err(|e| fail(PageFailure::FetchFailed, e.to_string()))?;
+        .map_err(|e| fail(format!("网络请求失败：{e}")))?;
+    let bytes = read_limited_bytes(response).map_err(|e| fail(e.to_string()))?;
     // Lossy like reqwest's old `.text()` decoding: undecodable bytes become
     // U+FFFD instead of rejecting a page that used to load.
     let html = String::from_utf8_lossy(&bytes).into_owned();
 
     if looks_like_paywall(&html) {
-        return Err(fail(PageFailure::Paywall, "疑似付费墙，已跳过"));
+        return Err(fail("疑似付费墙，已跳过"));
     }
 
     let mut title = title_from_html(&html).unwrap_or_default();
@@ -132,10 +128,7 @@ pub(crate) fn extract_page(
     };
 
     if let Some(defect) = body_defect(&text) {
-        return Err(fail(
-            defect,
-            format!("未能抽到可用正文：{}", defect.label()),
-        ));
+        return Err(fail(format!("未能抽到可用正文：{}", defect.label())));
     }
 
     if title.is_empty() {
