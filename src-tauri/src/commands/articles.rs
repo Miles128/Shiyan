@@ -344,3 +344,31 @@ pub async fn import_article_file(app: AppHandle, path: String) -> Result<Article
     })
     .await
 }
+
+#[tauri::command]
+pub async fn import_book(
+    app: AppHandle,
+    input: crate::books::ImportBookRequest,
+) -> Result<Article, AppError> {
+    crate::commands::spawn_db(app, move |state| {
+        crate::books::import_gutenberg_book(state, &input)
+    })
+    .await
+}
+
+#[tauri::command]
+pub fn list_book_articles(state: tauri::State<'_, DbState>) -> Result<Vec<ArticleListItem>, AppError> {
+    let conn = state.lock_read()?;
+    db::list_articles_by_origin(&conn, "book", 200)
+}
+
+#[tauri::command]
+pub fn articles_matching_terms(
+    state: tauri::State<'_, DbState>,
+    terms: Vec<String>,
+    recent: Vec<String>,
+    limit: Option<usize>,
+) -> Result<Vec<ArticleListItem>, AppError> {
+    let conn = state.lock_read()?;
+    db::articles_matching_terms(&conn, &terms, &recent, limit.unwrap_or(12))
+}

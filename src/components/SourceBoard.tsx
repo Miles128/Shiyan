@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { ArticleListItem } from "../api";
 import type { DifficultyLevel } from "../difficulty";
 import ArticleRow from "./ArticleRow";
@@ -19,6 +20,12 @@ type Props = {
   showTags?: boolean;
   /** Keyboard navigation highlight (article id), forwarded to ArticleRow. */
   highlightedId?: string | null;
+  /** Show each row's source. Useful when the board mixes publications. */
+  showSource?: boolean;
+  badgeFor?: (article: ArticleListItem) => string | undefined;
+  /** Rendered above the article list (book picks inside 今日推荐). */
+  extra?: ReactNode;
+  extraCount?: number;
 };
 
 /** One per-source board on the home page: header + article list. */
@@ -29,7 +36,17 @@ export default function SourceBoard({
   onToggleCollapsed,
   showTags,
   highlightedId,
+  showSource,
+  badgeFor,
+  extra,
+  extraCount = 0,
 }: Props) {
+  const countLabel = [
+    section.articles.length > 0 ? `${section.articles.length} 篇` : "",
+    extraCount > 0 ? `${extraCount} 本` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <section className="source-board">
       <button
@@ -42,20 +59,27 @@ export default function SourceBoard({
           ▾
         </span>
         <h2>{section.source}</h2>
-        <span className="muted">{section.articles.length} 篇</span>
+        <span className="muted">{countLabel || "0 篇"}</span>
       </button>
       {collapsed ? null : (
-        <ul className="article-list">
-          {section.articles.map((a) => (
-            <ArticleRow
-              key={a.id}
-              article={a}
-              difficulty={difficultyById.get(a.id) ?? null}
-              showTags={showTags}
-              highlighted={a.id === highlightedId}
-            />
-          ))}
-        </ul>
+        <>
+          {extra}
+          {section.articles.length > 0 && (
+            <ul className="article-list">
+              {section.articles.map((a) => (
+                <ArticleRow
+                  key={a.id}
+                  article={a}
+                  difficulty={difficultyById.get(a.id) ?? null}
+                  showSource={showSource}
+                  showTags={showTags}
+                  highlighted={a.id === highlightedId}
+                  badge={badgeFor?.(a)}
+                />
+              ))}
+            </ul>
+          )}
+        </>
       )}
     </section>
   );

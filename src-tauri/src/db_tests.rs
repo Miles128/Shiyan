@@ -22,6 +22,30 @@ fn sample_article(id: &str) -> db::Article {
 }
 
 #[test]
+fn articles_matching_terms_scores_whole_words() {
+    let path = temp_dir().join(format!("le-terms-{}.db", Uuid::new_v4()));
+    let conn = db::open_db(path).expect("open");
+    let mut hit = sample_article("hit");
+    hit.title = "Trade".into();
+    hit.content_text = "The tariff rose after the vote. ".repeat(20);
+    let mut miss = sample_article("miss");
+    miss.url = "https://example.com/miss".into();
+    miss.content_text = "tariffs rose overnight. ".repeat(20);
+    db::insert_article_if_new(&conn, &hit).unwrap();
+    db::insert_article_if_new(&conn, &miss).unwrap();
+    let found = db::articles_matching_terms(
+        &conn,
+        &["tariff".into(), "the".into()],
+        &["tariff".into()],
+        5,
+    )
+    .unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].id, "hit");
+    assert!(found[0].rank_score >= 3.0);
+}
+
+#[test]
 fn db_seeds_feeds_and_stores_article() {
     let path = temp_dir().join(format!("le-test-{}.db", Uuid::new_v4()));
     let conn = db::open_db(path.clone()).expect("open");

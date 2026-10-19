@@ -9,6 +9,9 @@ import {
   topPickIds,
   topTags,
 } from "../homeDerived";
+import { collectStudyTerms, mergeTodayPicks, rankCatalogForTerms, type StudyTerm } from "../vocabReading";
+import { BOOK_CATALOG, gutenbergTextUrl } from "../books/catalog";
+import BookCard from "../components/BookCard";
 import { useArticleBackfill, useHomeDifficulty, useInfiniteScroll } from "../homeHooks";
 import { formatLearningInsight } from "../learningStats";
 import {
@@ -105,6 +108,11 @@ export default function Home() {
   const [sources, setSources] = useState<[string, number][]>([]);
   const toast = useToast();
   const [learningStats, setLearningStats] = useState<LearningStats | null>(null);
+  /** Full-text hits for the learning bank, ranked ahead of interest picks. */
+  const [vocabArticles, setVocabArticles] = useState<ArticleListItem[]>([]);
+  const [studyTerms, setStudyTerms] = useState<StudyTerm[]>([]);
+  const [bookIdsByUrl, setBookIdsByUrl] = useState<Map<string, string>>(new Map());
+  const [downloadingBookId, setDownloadingBookId] = useState<string | null>(null);
   /** Source-board collapse mode (incl. 今日推荐 via "home-top-picks"), persisted. */
   const [collapseState, setCollapseState] = useState<CollapseState>(() =>
     loadCollapseState(),
@@ -185,6 +193,39 @@ export default function Home() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const words = await api.listMemory("word", "learning");
+        if (cancelled) return;
+        const terms = collectStudyTerms(words, new Date());
+        setStudyTerms(terms);
+        if (terms.length === 0) {
+          setVocabArticles([]);
+          return;
+        }
+        const matched = await api.articlesMatchingTerms(
+          terms.map((term) => term.term),
+          terms.filter((term) => term.recent).map((term) => term.term),
+        );
+        if (!cancelled) setVocabArticles(matched);
+      } catch {
+        if (!cancelled) setVocabArticles([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [learningTerms]);
+
+  useEffect(() => {
+    void api
+      .listBookArticles()
+      .then((rows) => setBookIdsByUrl(new Map(rows.map((row) => [row.url, row.id]))))
+      .catch(() => undefined);
+  }, [learningTerms]);
 
   useEffect(() => {
     void api.listArticleSources().then(setSources).catch(() => undefined);
@@ -273,22 +314,47 @@ export default function Home() {
     () => applyDifficultyOrder(articles, difficultyById).filter(matchesLevel),
     [articles, difficultyById, matchesLevel],
   );
-  const topPicks = useMemo(
-    () => pickTopArticles(orderedArticles, TOP_PICKS),
+  // Downloaded books stay on the shelf and in 今日推荐; they don't become
+  // another news source board.
+  const digest = useMemo(
+    () => orderedArticles.filter((a) => a.origin !== "book"),
     [orderedArticles],
   );
+  const interestPicks = useMemo(
+    () => pickTopArticles(digest, TOP_PICKS),
+    [digest],
+  );
+  const topPicks = useMemo(
+    () =>
+      mergeTodayPicks({
+        interest: interestPicks,
+        vocabMatched: vocabArticles,
+        max: TOP_PICKS,
+      }),
+    [interestPicks, vocabArticles],
+  );
+  const vocabPickIds = useMemo(
+    () => new Set(vocabArticles.map((article) => article.id)),
+    [vocabArticles],
+  );
+  const bookRecs = useMemo(() => {
+    const pickedUrls = new Set(topPicks.map((article) => article.url));
+    return rankCatalogForTerms(studyTerms, 3).filter(
+      (row) => !pickedUrls.has(gutenbergTextUrl(row.book.gutenbergId)),
+    );
+  }, [studyTerms, topPicks]);
   const picksIds = useMemo(() => topPickIds(topPicks), [topPicks]);
   // Difficulty-adjusted rank order: section order = first appearance, and
   // articles within a board keep their adjusted rank.
   const sections = useMemo(
     () =>
-      groupBySource(orderedArticles.filter((a) => !picksIds.has(a.id))),
-    [orderedArticles, picksIds],
+      groupBySource(digest.filter((a) => !picksIds.has(a.id))),
+    [digest, picksIds],
   );
 
   // Collapse mode lives here so 全部折叠/全部展开 sticks to boards that only
   // show up later (next page, re-rank); a name list only covered click-time.
-  const hasBoards = topPicks.length > 0 || sections.length > 0;
+  const hasBoards = topPicks.length > 0 || bookRecs.length > 0 || sections.length > 0;
   const allBoardsCollapsed =
     collapseState.all && collapseState.keys.length === 0;
 
@@ -458,6 +524,34 @@ export default function Home() {
     [knownTerms, markKnown, unmarkKnown, toast],
   );
 
+  async function openRecommendedBook(bookId: string) {
+    const book = BOOK_CATALOG.find((item) => item.id === bookId);
+    if (!book || downloadingBookId) return;
+    const url = gutenbergTextUrl(book.gutenbergId);
+    const existing = bookIdsByUrl.get(url);
+    if (existing) {
+      navigate(`/article/${existing}`);
+      return;
+    }
+    setDownloadingBookId(book.id);
+    try {
+      const article = await api.importBook({
+        url,
+        title: book.title,
+        author: book.author,
+        category: "other",
+        summaryZh: book.summaryZh,
+        tags: [...book.interests],
+      });
+      setBookIdsByUrl((prev) => new Map(prev).set(article.url, article.id));
+      navigate(`/article/${article.id}`);
+    } catch (e) {
+      toast.err(String(e));
+    } finally {
+      setDownloadingBookId(null);
+    }
+  }
+
   const resumePath = lastArticlePath();
 
   return (
@@ -487,7 +581,14 @@ export default function Home() {
             <span className="learning-insight-inline">
               {formatLearningInsight(learningStats)} ·{" "}
               <Link to="/stats">统计</Link>
+              {" · "}
+              <Link to="/books">书库</Link>
             </span>
+          )}
+          {!learningStats && (
+            <Link to="/books" className="linklike">
+              书库
+            </Link>
           )}
           <button
             type="button"
@@ -682,8 +783,11 @@ export default function Home() {
         <>
           <div className="boards-toolbar">
             <span className="muted">
-              {sections.length} 个来源
-              {allBoardsCollapsed ? " · 已全部折叠" : ""}
+              {sections.length > 0
+                ? `${sections.length} 个来源${allBoardsCollapsed ? " · 已全部折叠" : ""}`
+                : allBoardsCollapsed
+                  ? "已全部折叠"
+                  : ""}
             </span>
             <button
               type="button"
@@ -695,19 +799,49 @@ export default function Home() {
             </button>
           </div>
 
-          {topPicks.length > 0 && (
+          {(topPicks.length > 0 || bookRecs.length > 0) && (
             <div className="source-boards top-picks">
               <SourceBoard
                 section={{
                   source: "今日推荐",
-                  category: topPicks[0].category,
+                  category: topPicks[0]?.category ?? "other",
                   articles: topPicks,
                 }}
                 difficultyById={difficultyById}
                 collapsed={isSourceCollapsed(collapseState, "home-top-picks")}
                 onToggleCollapsed={() => toggleSourceBoard("home-top-picks")}
                 showTags={filtersOpen}
+                showSource
                 highlightedId={selectedId}
+                badgeFor={(article) =>
+                  vocabPickIds.has(article.id) ? "含生词" : undefined
+                }
+                extraCount={bookRecs.length}
+                extra={
+                  bookRecs.length > 0 ? (
+                    <div className="book-rec-block">
+                      <p className="muted book-rec-note">
+                        根据最近在学的词和生词库挑的书
+                      </p>
+                      <div className="book-rec-row">
+                        {bookRecs.map((row) => {
+                          const url = gutenbergTextUrl(row.book.gutenbergId);
+                          return (
+                            <BookCard
+                              key={row.book.id}
+                              book={row.book}
+                              compact
+                              matched={row.matched}
+                              busy={downloadingBookId === row.book.id}
+                              downloadedId={bookIdsByUrl.get(url)}
+                              onOpen={() => void openRecommendedBook(row.book.id)}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null
+                }
               />
             </div>
           )}
