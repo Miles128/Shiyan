@@ -142,6 +142,14 @@ a {
   height: 40px;
 }
 
+/* Reader: the title row draws the only line. Drop the top bar's rule and
+   frost so the two strips don't read as two bars. */
+.app-shell:has(.page.reader) .topbar {
+  border-bottom-color: transparent;
+  background: var(--bg);
+  backdrop-filter: none;
+}
+
 .topbar-nav {
   display: flex;
   align-items: center;
@@ -315,8 +323,9 @@ a {
   position: sticky;
   top: 39px;
   z-index: 30;
-  background: var(--bar-bg);
-  backdrop-filter: blur(8px);
+  /* Same paper as the page, one hairline under the title. The app top bar
+     drops its own rule on this page so the two bars don't stack two lines. */
+  background: var(--bg);
   margin-inline: calc(clamp(1.25rem, 4vw, 2.5rem) * -1);
   padding: 8px clamp(1.25rem, 4vw, 2.5rem) 6px;
   border-bottom: 1px solid var(--line);
@@ -933,7 +942,8 @@ a {
 
 .para-btn {
   opacity: 0;
-  transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+  visibility: hidden;
+  transition: opacity 0.15s ease, visibility 0.15s ease, color 0.15s ease, background 0.15s ease;
   width: 26px;
   height: 26px;
   border-radius: 8px;
@@ -950,6 +960,7 @@ a {
 .para-btn:focus,
 .para-btn:focus-visible {
   opacity: 1;
+  visibility: visible;
 }
 
 .para-btn:hover {
@@ -959,6 +970,7 @@ a {
 
 .para-btn.active {
   opacity: 1;
+  visibility: visible;
   color: var(--accent);
 }
 
@@ -1099,7 +1111,7 @@ mark.vocab-hit:hover {
 .hard-word {
   text-decoration: underline;
   text-decoration-color: rgba(15, 92, 76, 0.55);
-  text-decoration-thickness: 1.5px;
+  text-decoration-thickness: 1px;
   text-underline-offset: 3px;
   cursor: pointer;
   border-radius: 2px;
@@ -1174,7 +1186,7 @@ mark.vocab-hit:hover {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px;
-  box-shadow: var(--shadow);
+  box-shadow: none;
   transform: translateX(-30%);
 }
 
