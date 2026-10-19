@@ -8,7 +8,12 @@ import {
   shouldHideAppNav,
   shouldShowPlacementNav,
 } from "./placement/engine";
-import { useAppConfig } from "./store";
+import {
+  localDateKey,
+  readDailyStudyDate,
+  shouldForceDailyStudy,
+} from "./dailyStudy";
+import { useAppConfig, useVocab } from "./store";
 import { useToast } from "./components/Toaster";
 import { applyTheme, isThemePref } from "./theme";
 import { api } from "./api";
@@ -47,6 +52,17 @@ function IconVocab() {
   );
 }
 
+function IconBooks() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+      <path d="M8 7h8" />
+      <path d="M8 11h6" />
+    </svg>
+  );
+}
+
 function IconSettings() {
   return (
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -63,6 +79,18 @@ export default function App() {
   const navigate = useNavigate();
   const location = useLocation();
   const { cfg, ready, loadError, refresh } = useAppConfig();
+  const { learningWordCount, vocabReady } = useVocab();
+  const [dailyDoneOn, setDailyDoneOn] = useState<string | null>(() => readDailyStudyDate());
+
+  useEffect(() => {
+    const sync = () => setDailyDoneOn(readDailyStudyDate());
+    window.addEventListener("shiyan-daily-study", sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener("shiyan-daily-study", sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -92,13 +120,28 @@ export default function App() {
     applyTheme(isThemePref(cfg.theme) ? cfg.theme : "system");
   }, [cfg.theme]);
 
+  const placementPending = shouldForcePlacement(cfg);
+  const forceDaily =
+    vocabReady &&
+    shouldForceDailyStudy({
+      today: localDateKey(new Date()),
+      completedOn: dailyDoneOn,
+      wordCount: learningWordCount,
+      placementPending,
+    });
+
   useEffect(() => {
     if (!ready || loadError) return;
-    if (location.pathname.startsWith("/placement")) return;
-    if (shouldForcePlacement(cfg)) {
-      navigate("/placement", { replace: true });
+    if (placementPending) {
+      if (!location.pathname.startsWith("/placement")) {
+        navigate("/placement", { replace: true });
+      }
+      return;
     }
-  }, [cfg, ready, loadError, location.pathname, navigate]);
+    if (!vocabReady || !forceDaily) return;
+    if (location.pathname.startsWith("/daily")) return;
+    navigate("/daily", { replace: true });
+  }, [ready, loadError, placementPending, vocabReady, forceDaily, location.pathname, navigate]);
 
   // Top-bar page buttons act as toggles: clicking the active page goes home.
   function toggleNav(e: React.MouseEvent, to: string) {
@@ -134,12 +177,14 @@ export default function App() {
     }
   }
 
-  const forcePlacement = shouldForcePlacement(cfg);
-  const hideNav = shouldHideAppNav({
-    ready,
-    loadError,
-    forcePlacement,
-  });
+  const forcePlacement = placementPending;
+  const hideNav =
+    shouldHideAppNav({
+      ready,
+      loadError,
+      forcePlacement,
+    }) ||
+    (forceDaily && location.pathname.startsWith("/daily"));
   const showPlacementNav = shouldShowPlacementNav({
     ready,
     loadError,
@@ -182,6 +227,15 @@ export default function App() {
               >
                 <IconImport />
               </button>
+              <NavLink
+                to="/books"
+                className="topbar-btn"
+                title="书库"
+                aria-label="书库"
+                onClick={(e) => toggleNav(e, "/books")}
+              >
+                <IconBooks />
+              </NavLink>
               <NavLink
                 to="/vocab"
                 className="topbar-btn"

@@ -18,6 +18,8 @@ type Props = {
   showTags?: boolean;
   /** Keyboard navigation highlight (j/k on the home page). */
   highlighted?: boolean;
+  /** Short reason chip, e.g. a vocab-matched pick. */
+  badge?: string;
 };
 
 /** One article row, shared by the home boards and the library list. */
@@ -27,6 +29,7 @@ export default function ArticleRow({
   showSource,
   showTags = true,
   highlighted = false,
+  badge,
 }: Props) {
   const blurb = articleListBlurb(article);
   const lengthLabel = articleLengthLabel(article.word_count);
@@ -40,6 +43,7 @@ export default function ArticleRow({
         <div className="article-title-line">
           <h3 className="article-title-en">{article.title}</h3>
           {lengthLabel && <span className="article-length">{lengthLabel}</span>}
+          {badge && <span className="pill">{badge}</span>}
           {difficulty && (
             <span className={difficultyClassName(difficulty)}>
               {difficultyLabel(difficulty)}

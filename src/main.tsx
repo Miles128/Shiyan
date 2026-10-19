@@ -11,6 +11,8 @@ import Vocab from "./pages/Vocab";
 import Settings from "./pages/Settings";
 import Stats from "./pages/Stats";
 import Placement from "./pages/Placement";
+import Books from "./pages/Books";
+import DailyStudy from "./pages/DailyStudy";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
@@ -24,6 +26,8 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
                 <Route index element={<Home />} />
                 <Route path="article/:id" element={<Reader />} />
                 <Route path="vocab" element={<Vocab />} />
+                <Route path="books" element={<Books />} />
+                <Route path="daily" element={<DailyStudy />} />
                 <Route path="stats" element={<Stats />} />
                 <Route path="settings" element={<Settings />} />
                 <Route path="placement" element={<Placement />} />

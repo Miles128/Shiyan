@@ -1,3 +1,4 @@
+mod books;
 mod commands;
 mod config;
 mod db;
@@ -7,6 +8,7 @@ mod import_file;
 mod rank;
 pub(crate) mod reflow;
 mod srs;
+mod term_match;
 mod translate;
 mod vocab;
 
@@ -79,6 +81,9 @@ pub fn run() {
             commands::articles::fill_missing_tags,
             commands::articles::import_article_url,
             commands::articles::import_article_file,
+            commands::articles::import_book,
+            commands::articles::list_book_articles,
+            commands::articles::articles_matching_terms,
             commands::articles::repair_paragraphs,
             commands::articles::translate_paragraph,
             commands::articles::translate_selection,

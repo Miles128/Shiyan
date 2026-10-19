@@ -946,3 +946,78 @@ pub fn set_article_summary_zh(conn: &Connection, id: &str, summary_zh: &str) -> 
     ?;
     Ok(())
 }
+
+/// Articles the reader downloaded from the public-domain shelf.
+pub fn list_articles_by_origin(
+    conn: &Connection,
+    origin: &str,
+    limit: i64,
+) -> Result<Vec<ArticleListItem>, AppError> {
+    let list_cols = ARTICLE_COLS.replace(
+        "content_text",
+        &format!("SUBSTR(content_text,1,{LIST_EXCERPT_CHARS})"),
+    );
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {list_cols} FROM articles WHERE origin=?1 ORDER BY fetched_at DESC LIMIT ?2"
+    ))?;
+    let rows = stmt
+        .query_map(params![origin, limit.clamp(1, MAX_LIST_LIMIT)], map_article_list_item)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+fn list_item_by_id(conn: &Connection, id: &str) -> Result<Option<ArticleListItem>, AppError> {
+    let list_cols = ARTICLE_COLS.replace(
+        "content_text",
+        &format!("SUBSTR(content_text,1,{LIST_EXCERPT_CHARS})"),
+    );
+    conn.query_row(
+        &format!("SELECT {list_cols} FROM articles WHERE id=?1"),
+        params![id],
+        map_article_list_item,
+    )
+    .optional()
+    .map_err(AppError::from)
+}
+
+/// Articles whose title or body contains the learner's words.
+/// `rank_score` is the weighted hit count (recent terms weigh more).
+pub fn articles_matching_terms(
+    conn: &Connection,
+    terms: &[String],
+    recent: &[String],
+    limit: usize,
+) -> Result<Vec<ArticleListItem>, AppError> {
+    let weighted = crate::term_match::weight_terms(terms, recent);
+    if weighted.is_empty() {
+        return Ok(vec![]);
+    }
+    let limit = limit.clamp(1, 30);
+    let mut stmt = conn.prepare("SELECT id, title, content_text FROM articles")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    let mut scored: Vec<(String, f64)> = Vec::new();
+    for row in rows {
+        let (id, title, body) = row?;
+        let hay = format!("{} {}", title.to_ascii_lowercase(), body.to_ascii_lowercase());
+        let score = crate::term_match::score_text(&hay, &weighted);
+        if score > 0 {
+            scored.push((id, score as f64));
+        }
+    }
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal).then_with(|| a.0.cmp(&b.0)));
+    scored.truncate(limit);
+    let mut out = Vec::new();
+    for (id, score) in scored {
+        if let Some(mut item) = list_item_by_id(conn, &id)? {
+            item.rank_score = score;
+            out.push(item);
+        }
+    }
+    Ok(out)
+}

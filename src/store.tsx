@@ -110,6 +110,10 @@ export function useAppConfig(): AppConfigState {
 type VocabState = {
   /** Term strings of everything currently in `learning` status. */
   learningTerms: string[];
+  /** Learning words only (phrases excluded). Drives the daily study gate. */
+  learningWordCount: number;
+  /** True after the first vocab load attempt. */
+  vocabReady: boolean;
   refreshLearningTerms: () => Promise<void>;
   /** Lowercased terms the learner marked as already known. */
   knownTerms: string[];
@@ -122,6 +126,8 @@ const VocabContext = createContext<VocabState | null>(null);
 
 export function VocabProvider({ children }: { children: ReactNode }) {
   const [learningTerms, setLearningTerms] = useState<string[]>([]);
+  const [learningWordCount, setLearningWordCount] = useState(0);
+  const [vocabReady, setVocabReady] = useState(false);
   const [knownTerms, setKnownTerms] = useState<string[]>([]);
 
   const refreshLearningTerms = useCallback(async () => {
@@ -131,8 +137,11 @@ export function VocabProvider({ children }: { children: ReactNode }) {
         api.listMemory("phrase", "learning"),
       ]);
       setLearningTerms([...words, ...phrases].map((v) => v.term));
+      setLearningWordCount(words.length);
     } catch {
       // highlight list is optional
+    } finally {
+      setVocabReady(true);
     }
   }, []);
 
@@ -165,13 +174,24 @@ export function VocabProvider({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       learningTerms,
+      learningWordCount,
+      vocabReady,
       refreshLearningTerms,
       knownTerms,
       refreshKnownTerms,
       markKnown,
       unmarkKnown,
     }),
-    [learningTerms, refreshLearningTerms, knownTerms, refreshKnownTerms, markKnown, unmarkKnown],
+    [
+      learningTerms,
+      learningWordCount,
+      vocabReady,
+      refreshLearningTerms,
+      knownTerms,
+      refreshKnownTerms,
+      markKnown,
+      unmarkKnown,
+    ],
   );
   return (
     <VocabContext.Provider value={value}>{children}</VocabContext.Provider>

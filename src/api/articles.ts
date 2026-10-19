@@ -70,6 +70,31 @@ export const apiArticles = {
     invoke<Article>("import_article_url", { url }),
   importArticleFile: (path: string) =>
     invoke<Article>("import_article_file", { path }),
+  importBook: (input: {
+    url: string;
+    title: string;
+    author: string;
+    category: string;
+    summaryZh: string;
+    tags: string[];
+  }) =>
+    invoke<Article>("import_book", {
+      input: {
+        url: input.url,
+        title: input.title,
+        author: input.author,
+        category: input.category,
+        summary_zh: input.summaryZh,
+        tags: input.tags,
+      },
+    }),
+  listBookArticles: () => invoke<ArticleListItem[]>("list_book_articles"),
+  articlesMatchingTerms: (terms: string[], recent: string[], limit?: number) =>
+    invoke<ArticleListItem[]>("articles_matching_terms", {
+      terms,
+      recent,
+      limit: limit ?? null,
+    }),
   /** Re-fetch articles whose stored body lost paragraph breaks. */
   repairParagraphs: (limit?: number) =>
     invoke<number>("repair_paragraphs", { limit: limit ?? null }),

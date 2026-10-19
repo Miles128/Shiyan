@@ -2042,6 +2042,102 @@ button.flashcard {
   margin-left: auto;
 }
 
+.book-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.filter-block {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.book-search .search {
+  margin-bottom: 12px;
+}
+
+.book-result-count {
+  margin: 4px 0 12px;
+}
+
+.book-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.book-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.book-card-meta,
+.book-card-tags,
+.book-card-author,
+.book-card-summary,
+.book-card-match {
+  margin: 0;
+}
+
+.book-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.book-card-title {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 1.35;
+}
+
+.book-card-summary {
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+.book-card-match {
+  color: var(--accent);
+  font-size: 0.88rem;
+}
+
+.book-card .btn {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+
+.book-rec-block {
+  margin: 4px 0 8px;
+}
+
+.book-rec-note {
+  margin: 0 0 8px;
+}
+
+.book-rec-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.book-card.compact {
+  min-width: 0;
+}
+
+.daily-study .flashcard {
+  width: min(100%, 560px);
+}
+
 /* Keyboard navigation highlight (j/k on the home list). */
 .article-row.is-active {
   background: var(--hover-fill);
