@@ -329,7 +329,7 @@ const NAME_GLOSS_MARKERS: readonly string[] = [
 ];
 
 /** True when the gloss explicitly tags the entry as a name. */
-export function isNameGloss(zh: string | undefined): boolean {
+function isNameGloss(zh: string | undefined): boolean {
   if (!zh) return false;
   return NAME_GLOSS_MARKERS.some((m) => zh.includes(m));
 }
@@ -367,7 +367,7 @@ const CLAUSE_OPEN_PUNCT_RE = /^[^\p{L}\p{N}]*["'“”‘’«»([{—–…][^\
  * An opening quote / bracket / dash counts too, else every quoted sentence
  * starts with a "name" (`"The Fed will hold"` → 那 under `The`).
  */
-export function isSentenceInitial(
+function isSentenceInitial(
   tokens: { raw: string; isWord: boolean }[],
   index: number,
 ): boolean {

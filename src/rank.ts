@@ -135,7 +135,7 @@ export function explorationJitter(articleId: string, dayKey: number): number {
  * → 0 (now). Seconds are truncated toward zero before the day division, exactly
  * like the Rust `num_seconds() as f64 / 86_400.0`.
  */
-export function articleAgeDays(
+function articleAgeDays(
   publishedAt: string | null,
   fetchedAt: string,
   nowMs: number,

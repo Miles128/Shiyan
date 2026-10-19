@@ -62,11 +62,6 @@ export function useWordPopover(config: WordPopoverConfig) {
         // details are optional — fall through to the local gloss / LLM
       }
       const term = detail?.lemma || ruleTerm;
-      // Record the lookup (fire-and-forget): reviewable history for the
-      // Vocab page. Covers dictionary hits and AI translations alike.
-      void api
-        .recordLookup(term, cfg.current.contextFor(source, term), cfg.current.articleId)
-        .catch(() => undefined);
       if (detail) {
         setPopover({ x, y, text: term, source, detail, origin: "local", loading: false });
         return;

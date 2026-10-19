@@ -8,6 +8,9 @@ edition = "2021"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
+# 版本锁步：serde_rusqlite 必须与 rusqlite 同取一份 libsqlite3-sys，
+# 0.36 是与 rusqlite 0.32 配套的最后一个版本（0.42 起拉 rusqlite 0.39 会 links 冲突）。
+serde_rusqlite = "0.36"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 feed-rs = "2.3"
 chrono = { version = "0.4", features = ["serde"] }
@@ -18,5 +21,7 @@ html2text = "0.13"
 readability = { version = "0.3", default-features = false }
 url = "2"
 pdf-extract = "0.12.0"
+csv = "1"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+quick-xml = "0.41"
 ts-rs = "10"

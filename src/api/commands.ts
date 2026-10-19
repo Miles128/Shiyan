@@ -12,7 +12,6 @@ import type {
   FullTranslateResult,
   ImportedBook,
   LearningStats,
-  LookupEntry,
   MemoryItem,
   RankWindow,
   ReadingStats,
@@ -89,7 +88,7 @@ export interface Commands {
     ret: FullTranslateResult;
   };
 
-  // ── memory / vocab / known words / lookups ────────────────────────────
+  // ── memory / vocab / known words ─────────────────────────────────────
   add_memory: {
     args: {
       input: {
@@ -116,16 +115,6 @@ export interface Commands {
   list_known_words: { args: void; ret: string[] };
   add_known_word: { args: { term: string }; ret: void };
   remove_known_word: { args: { term: string }; ret: void };
-  record_lookup: {
-    args: { term: string; context: string | null; articleId: string | null };
-    ret: void;
-  };
-  list_lookups: {
-    args: { search: string | null; limit: number | null; offset: number | null };
-    ret: LookupEntry[];
-  };
-  delete_lookup: { args: { id: number }; ret: void };
-  clear_lookups: { args: void; ret: void };
 
   // ── feeds ─────────────────────────────────────────────────────────────
   list_feeds: { args: void; ret: FeedSource[] };

@@ -5,7 +5,7 @@
 //! relevance — 62k English rows scan in single-digit milliseconds, and a full
 //! text index would need tokenization this app never uses anywhere else.
 
-use super::CatalogBook;
+use super::{row_as, CatalogBook};
 use crate::error::AppError;
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -92,12 +92,12 @@ pub fn search_catalog(
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = if shelf.trim().is_empty() {
-        stmt.query_map(params![pattern, prefix, limit.clamp(1, 200)], map_catalog_book)?
+        stmt.query_map(params![pattern, prefix, limit.clamp(1, 200)], row_as::<CatalogBook>)?
             .collect::<Result<Vec<_>, _>>()?
     } else {
         stmt.query_map(
             params![pattern, prefix, limit.clamp(1, 200), shelf.trim()],
-            map_catalog_book,
+            row_as::<CatalogBook>,
         )?
         .collect::<Result<Vec<_>, _>>()?
     };
@@ -108,7 +108,7 @@ pub fn get_catalog_book(conn: &Connection, gid: i64) -> Result<Option<CatalogBoo
     conn.query_row(
         "SELECT gid,title,authors,issued,shelf,subjects FROM book_catalog WHERE gid=?1",
         params![gid],
-        map_catalog_book,
+        row_as::<CatalogBook>,
     )
     .optional()
     .map_err(AppError::from)
@@ -130,16 +130,4 @@ pub fn gid_from_feed_url(url: &str) -> Option<i64> {
         .rsplit('/')
         .next()
         .and_then(|tail| tail.parse::<i64>().ok())
-}
-
-fn map_catalog_book(row: &rusqlite::Row<'_>) -> rusqlite::Result<CatalogBook> {
-    Ok(CatalogBook {
-        gid: row.get(0)?,
-        title: row.get(1)?,
-        authors: row.get(2)?,
-        issued: row.get(3)?,
-        shelf: row.get(4)?,
-        subjects: row.get(5)?,
-        imported: false,
-    })
 }

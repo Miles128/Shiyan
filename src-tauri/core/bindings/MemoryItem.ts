@@ -12,4 +12,10 @@ kind: string, term: string, definition_zh: string,
 /**
  * Part of speech for words; usage label (idiom / collocation …) for phrases.
  */
-word_type: string, collocations: Array<string>, context_sentence: string, article_id: string | null, status: string, interval_days: number, reps: number, consecutive_know: number, next_review_at: string, created_at: string, };
+word_type: string, 
+/**
+ * Stored as a JSON array string in `memory_items.collocations_json`
+ * (aliased back to `collocations` in the SELECT), so the row mapper
+ * parses it here instead of in every query.
+ */
+collocations: Array<string>, context_sentence: string, article_id: string | null, status: string, interval_days: number, reps: number, consecutive_know: number, next_review_at: string, created_at: string, };

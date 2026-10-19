@@ -1362,35 +1362,6 @@ mark.vocab-hit:hover {
   color: var(--ink);
 }
 
-/* Settings 开关行 */
-.toggle-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  margin-top: 10px;
-  cursor: pointer;
-}
-
-.toggle-row input[type="checkbox"] {
-  margin-top: 3px;
-  width: 16px;
-  height: 16px;
-  accent-color: rgb(15, 92, 76);
-  flex-shrink: 0;
-}
-
-.toggle-row strong {
-  display: block;
-  font-weight: 600;
-}
-
-.toggle-hint {
-  display: block;
-  margin-top: 2px;
-  font-size: 0.88em;
-  line-height: 1.55;
-}
-
 .settings-section select {
   display: block;
   width: 100%;
@@ -1400,35 +1371,6 @@ mark.vocab-hit:hover {
   border-radius: 8px;
   background: var(--panel);
   color: var(--ink);
-}
-
-.settings-type-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px 16px;
-}
-
-.reader-preview {
-  margin-top: 8px;
-  padding: 14px 16px;
-  border: none;
-  border-radius: 10px;
-  background: var(--card);
-  font-family: var(--reader-font);
-  font-size: var(--reader-size);
-  line-height: var(--reader-lh);
-  max-width: var(--reader-measure);
-}
-
-.reader-preview.reader-full {
-  max-width: none;
-}
-
-.reader-preview p {
-  margin: 0;
-  text-align: justify;
-  text-justify: inter-word;
-  hyphens: auto;
 }
 
 .source-link {
@@ -2103,9 +2045,6 @@ details.settings-section > summary {
   .reader-title-row {
     margin-inline: calc(clamp(0.5rem, 3vw, 1rem) * -1);
     padding-inline: clamp(0.5rem, 3vw, 1rem);
-  }
-  .settings-type-grid {
-    grid-template-columns: 1fr;
   }
   .refresh-progress {
     padding: 10px 14px 12px;

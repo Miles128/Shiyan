@@ -78,7 +78,7 @@ export function placementSummaryText(cfg: {
   return `我的词频水平：约 ${words} 词${when}`;
 }
 
-export function clampL(L: number): number {
+function clampL(L: number): number {
   return Math.max(L_MIN, Math.min(L_MAX, L));
 }
 

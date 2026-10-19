@@ -5,7 +5,7 @@ import type { FeedSource } from "./api/types";
 // 保持纯函数，供 Sidebar / 测试消费。
 
 /** Fixed top-level order for the built-in categories (mirrors the DB seed). */
-export const BUILTIN_CATEGORY_ORDER: { id: string; label: string }[] = [
+const BUILTIN_CATEGORY_ORDER: { id: string; label: string }[] = [
   { id: "tech", label: "科技" },
   { id: "finance", label: "财经" },
   { id: "world", label: "国际" },

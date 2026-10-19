@@ -4,11 +4,10 @@ import { useAppConfig, useVocab } from "../store";
 import { api } from "../api";
 import { placementSummaryText } from "../placement/engine";
 import KnownWords from "../components/KnownWords";
-import LookupHistory from "../components/LookupHistory";
 import MemoryLibrary from "../components/MemoryLibrary";
 import PageBack from "../components/PageBack";
 
-type Library = "vocab" | "phrases" | "known" | "lookups";
+type Library = "vocab" | "phrases" | "known";
 
 export default function Vocab() {
   const { refreshLearningTerms } = useVocab();
@@ -54,7 +53,6 @@ export default function Vocab() {
             ["vocab", "生词"],
             ["phrases", "短语"],
             ["known", "已认识"],
-            ["lookups", "查词历史"],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -69,8 +67,6 @@ export default function Vocab() {
 
       {library === "known" ? (
         <KnownWords />
-      ) : library === "lookups" ? (
-        <LookupHistory />
       ) : library === "phrases" ? (
         <MemoryLibrary
           kind="phrase"

@@ -1,25 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
-import { api, defaultAppConfig, type AppConfig, type RefreshProgress } from "../api";
-import { normalizeConfig, useAppConfig } from "../store";
+import { api, type RefreshProgress } from "../api";
+import { useConfigForm } from "../useConfigForm";
 import { placementSummaryText } from "../placement/engine";
 import { useToast } from "../components/Toaster";
 import PageBack from "../components/PageBack";
-import { isThemePref, THEME_LABELS, THEME_PREFS, type ThemePref } from "../theme";
-import {
-  GLOSS_MIN_LINE_HEIGHT,
-  READER_FONTS,
-  READER_FONT_SIZES,
-  READER_LINE_HEIGHTS,
-  READER_LINE_WIDTHS,
-  readingCssVars,
-  resolveReadingPrefs,
-  type ReaderFontId,
-  type ReaderFontSize,
-  type ReaderLineHeight,
-  type ReaderLineWidthId,
-} from "../readingPrefs";
+import { type PrefOption } from "../prefOptions";
 import {
   CEFR_LEVELS,
   FREQ_BANDS,
@@ -37,7 +24,14 @@ const TABS = [
   ["data", "数据"],
 ] as const;
 
-type PrefOption = { value: string | number; label: string };
+const CEFR_OPTIONS: readonly PrefOption[] = CEFR_LEVELS.map((lv) => ({
+  value: lv,
+  label: lv,
+}));
+const FREQ_OPTIONS: readonly PrefOption[] = FREQ_BANDS.map((n) => ({
+  value: n,
+  label: String(n >= 1000 ? `${n / 1000}k` : n),
+}));
 
 /** Labelled <select> bound to one config field; options are data-driven. */
 function PrefSelect(props: {
@@ -60,42 +54,11 @@ function PrefSelect(props: {
   );
 }
 
-const THEME_OPTIONS: readonly PrefOption[] = THEME_PREFS.map((p) => ({
-  value: p,
-  label: THEME_LABELS[p],
-}));
-const CEFR_OPTIONS: readonly PrefOption[] = CEFR_LEVELS.map((lv) => ({
-  value: lv,
-  label: lv,
-}));
-const FREQ_OPTIONS: readonly PrefOption[] = FREQ_BANDS.map((n) => ({
-  value: n,
-  label: String(n >= 1000 ? `${n / 1000}k` : n),
-}));
-const FONT_OPTIONS: readonly PrefOption[] = READER_FONTS.map((f) => ({
-  value: f.id,
-  label: f.label,
-}));
-const FONT_SIZE_OPTIONS: readonly PrefOption[] = READER_FONT_SIZES.map(
-  (s) => ({ value: s.value, label: s.label }),
-);
-const LINE_HEIGHT_OPTIONS: readonly PrefOption[] = READER_LINE_HEIGHTS.map(
-  (h) => ({ value: h.value, label: h.label }),
-);
-const LINE_WIDTH_OPTIONS: readonly PrefOption[] = READER_LINE_WIDTHS.map(
-  (w) => ({ value: w.id, label: w.label }),
-);
-
 export default function Settings() {
-  const { cfg: savedCfg, ready, save: saveCfg } = useAppConfig();
   const toast = useToast();
-  const [cfg, setCfg] = useState<AppConfig>(() =>
-    normalizeConfig(defaultAppConfig()),
+  const { cfg, updateNow, updateSoon } = useConfigForm((message) =>
+    toast.err(message),
   );
-  const cfgRef = useRef(cfg);
-  useEffect(() => {
-    cfgRef.current = cfg;
-  }, [cfg]);
   const [tab, setTab] = useState<Tab>("reading");
   const [repairing, setRepairing] = useState(false);
   const [repairMsg, setRepairMsg] = useState<string | null>(null);
@@ -118,9 +81,6 @@ export default function Settings() {
       unlisten?.();
     };
   }, []);
-  const saveTimer = useRef<number | undefined>(undefined);
-  const pendingSaveRef = useRef(false);
-  const seededRef = useRef(false);
 
   async function backupDb() {
     setBackingUp(true);
@@ -163,69 +123,6 @@ export default function Settings() {
       setRepairing(false);
     }
   }
-  const readingPreview = useMemo(() => resolveReadingPrefs(cfg), [cfg]);
-
-  useEffect(() => {
-    // Only seed local state on first ready; subsequent `savedCfg` changes
-    // (from our own debounced saves) must not overwrite in-progress edits.
-    if (ready && !seededRef.current) {
-      seededRef.current = true;
-      setCfg(normalizeConfig(savedCfg));
-    }
-  }, [ready, savedCfg]);
-
-  const persist = useCallback(
-    async (next: AppConfig) => {
-      try {
-        await saveCfg(next);
-      } catch (e) {
-        toast.err(String(e));
-      }
-    },
-    [saveCfg, toast],
-  );
-
-  /** Apply a patch to local state; selects persist right away. */
-  const updateNow = useCallback(
-    (patch: Partial<AppConfig>) => {
-      const next = normalizeConfig({ ...cfgRef.current, ...patch });
-      cfgRef.current = next;
-      setCfg(next);
-      void persist(next);
-    },
-    [persist],
-  );
-
-  /** Text/number inputs debounce so typing doesn't hit disk per keystroke. */
-  const updateSoon = useCallback(
-    (patch: Partial<AppConfig>) => {
-      const next = normalizeConfig({ ...cfgRef.current, ...patch });
-      cfgRef.current = next;
-      setCfg(next);
-      if (saveTimer.current) window.clearTimeout(saveTimer.current);
-      pendingSaveRef.current = true;
-      saveTimer.current = window.setTimeout(() => {
-        saveTimer.current = undefined;
-        pendingSaveRef.current = false;
-        void persist(cfgRef.current);
-      }, 800);
-    },
-    [persist],
-  );
-
-  // Flush a pending debounced save when leaving the page.
-  useEffect(() => {
-    return () => {
-      if (saveTimer.current) {
-        window.clearTimeout(saveTimer.current);
-        saveTimer.current = undefined;
-        if (pendingSaveRef.current) {
-          void saveCfg(cfgRef.current).catch(() => undefined);
-          pendingSaveRef.current = false;
-        }
-      }
-    };
-  }, [saveCfg]);
 
   return (
     <div className="page">
@@ -246,20 +143,15 @@ export default function Settings() {
       {tab === "reading" && (
         <>
           <p className="muted settings-group-label">读与标</p>
-          <section className="settings-section">
-            <h2>外观</h2>
-            <PrefSelect
-              label="主题"
-              value={isThemePref(cfg.theme) ? cfg.theme : "system"}
-              onChange={(raw) => updateNow({ theme: raw as ThemePref })}
-              options={THEME_OPTIONS}
-            />
-          </section>
+          <p className="muted">
+            主题、字体、字号、行距、行宽与超难词释义都在阅读页右上「Aa」面板调整。
+          </p>
 
           <section className="settings-section">
             <h2>阅读难度</h2>
             <p className="muted">
-              正文会给「超出 CEFR」或「超出词频上限」的词/短语加下划线。两套阈值同时生效。
+              难词 = 正文里加下划线的词（超出 CEFR 或超出词频上限，两套阈值同时生效）；
+              超难词 = 比阈值再高一档的词，可在「Aa」面板开启后淡色挂中文释义。
             </p>
             <PrefSelect
               label="我的 CEFR 水平"
@@ -273,22 +165,6 @@ export default function Settings() {
               onChange={(raw) => updateNow({ freq_band: Number(raw) as FreqBand })}
               options={FREQ_OPTIONS}
             />
-            <label className="toggle-row">
-              <input
-                type="checkbox"
-                checked={cfg.show_hard_word_gloss}
-                onChange={(e) =>
-                  updateNow({ show_hard_word_gloss: e.target.checked })
-                }
-              />
-              <span>
-                <strong>超级难词自动挂中文</strong>
-                <span className="muted toggle-hint">
-                  在「比下划线再高一档」的词下方淡色显示词典首义（比设定高 2 个 CEFR 档或词频档翻倍），
-                  hover 加深。释义只占行距留白，开启后行高至少 {GLOSS_MIN_LINE_HEIGHT}。关闭后阅读区仅保留下划线，点击/划词翻译不变。
-                </span>
-              </span>
-            </label>
             <div className="placement-settings">
               <p className="muted">
                 {placementSummaryText(cfg) ?? "尚未完成词汇量测验。"}
@@ -299,54 +175,7 @@ export default function Settings() {
             </div>
           </section>
 
-          <p className="muted settings-group-label">版式与存档</p>
-          <section className="settings-section">
-            <h2>阅读排版</h2>
-            <p className="muted">只作用于阅读页正文。改动即时生效，阅读页内也可用「Aa」按钮调整。</p>
-            <div className="settings-type-grid">
-              <PrefSelect
-                label="字体"
-                value={cfg.reader_font}
-                onChange={(raw) => updateNow({ reader_font: raw as ReaderFontId })}
-                options={FONT_OPTIONS}
-              />
-              <PrefSelect
-                label="字号"
-                value={cfg.reader_font_size}
-                onChange={(raw) =>
-                  updateNow({ reader_font_size: Number(raw) as ReaderFontSize })
-                }
-                options={FONT_SIZE_OPTIONS}
-              />
-              <PrefSelect
-                label="行距"
-                value={cfg.reader_line_height}
-                onChange={(raw) =>
-                  updateNow({ reader_line_height: Number(raw) as ReaderLineHeight })
-                }
-                options={LINE_HEIGHT_OPTIONS}
-              />
-              <PrefSelect
-                label="行宽"
-                value={cfg.reader_line_width}
-                onChange={(raw) =>
-                  updateNow({ reader_line_width: raw as ReaderLineWidthId })
-                }
-                options={LINE_WIDTH_OPTIONS}
-              />
-            </div>
-            <div
-              className={`reader-preview${readingPreview.fullWidth ? " reader-full" : ""}`}
-              style={readingCssVars(readingPreview)}
-            >
-              <p>
-                The best time to plant a tree was twenty years ago. The second
-                best time is now. Reading English news works the same way: a
-                little every day, in a column that does not tire the eye.
-              </p>
-            </div>
-          </section>
-
+          <p className="muted settings-group-label">存档</p>
           <section className="settings-section">
             <h2>文章缓存</h2>
             <label>
@@ -434,7 +263,7 @@ export default function Settings() {
         <section className="settings-section">
           <h2>备份与恢复</h2>
           <p className="muted">
-            备份生成整个数据库的一致快照（文章、生词、复习进度、已认识词、查词历史）。
+            备份生成整个数据库的一致快照（文章、生词、复习进度、已认识词）。
             恢复时选择备份文件，重启拾言后生效；当前数据会自动备份为 .pre-restore.bak。
           </p>
           <div className="data-actions">

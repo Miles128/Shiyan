@@ -1,8 +1,7 @@
 use super::*;
 use super::filters::{
     body_defect, choose_article_body, is_blocked_content, is_readable_article_body,
-    looks_truncated, rss_trust_chars, MIN_IMPORTED_BODY_CHARS, PageFailure,
-    TRUST_RSS_FULLTEXT_CHARS,
+    looks_truncated, rss_trust_chars, MIN_IMPORTED_BODY_CHARS, TRUST_RSS_FULLTEXT_CHARS,
 };
 use std::collections::HashSet;
 

@@ -1,5 +1,5 @@
 use crate::error::AppError;
-use super::{Article, ArticleListItem};
+use super::{row_as, Article, ArticleListItem};
 use rusqlite::{params, Connection, OptionalExtension};
 
 /// Full-row projection. The list projection is derived from this (see
@@ -82,8 +82,8 @@ pub fn query_articles(
     offset: Option<i64>,
 ) -> Result<Vec<ArticleListItem>, AppError> {
     // Same columns as ARTICLE_COLS, with the body truncated and renamed to the
-    // field the list row carries. Named lookups in [`map_article_list_item`]
-    // depend on that alias.
+    // field the list row carries. The `row_as` mapping matches
+    // [`ArticleListItem`] fields by name, so that alias must stay.
     let list_cols = ARTICLE_COLS.replace(
         "content_text",
         &format!("SUBSTR(content_text,1,{LIST_EXCERPT_CHARS}) AS excerpt"),
@@ -143,54 +143,9 @@ pub fn query_articles(
 
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt
-        .query_map(rusqlite::params_from_iter(params.iter()), map_article_list_item)?
+        .query_map(rusqlite::params_from_iter(params.iter()), row_as::<ArticleListItem>)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
-}
-
-pub fn map_article_list_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<ArticleListItem> {
-    Ok(ArticleListItem {
-        id: row.get("id")?,
-        url: row.get("url")?,
-        title: row.get("title")?,
-        source: row.get("source")?,
-        category: row.get("category")?,
-        published_at: row.get("published_at")?,
-        excerpt: row.get("excerpt")?,
-        fetched_at: row.get("fetched_at")?,
-        origin: row.get("origin")?,
-        summary_zh: row.get("summary_zh")?,
-        last_opened_at: row.get("last_opened_at")?,
-        open_count: row.get("open_count")?,
-        word_count: row.get("word_count")?,
-        rank_score: 0.0,
-        dwell_ms: row.get("dwell_ms")?,
-        read_completed: row.get::<_, i64>("read_completed")? != 0,
-        liked: row.get::<_, i64>("liked")? != 0,
-    })
-}
-
-pub fn map_article(row: &rusqlite::Row<'_>) -> rusqlite::Result<Article> {
-    Ok(Article {
-        id: row.get("id")?,
-        url: row.get("url")?,
-        title: row.get("title")?,
-        source: row.get("source")?,
-        category: row.get("category")?,
-        published_at: row.get("published_at")?,
-        content_text: row.get("content_text")?,
-        fetched_at: row.get("fetched_at")?,
-        origin: row.get("origin")?,
-        summary_zh: row.get("summary_zh")?,
-        last_opened_at: row.get("last_opened_at")?,
-        open_count: row.get("open_count")?,
-        word_count: row.get("word_count")?,
-        quality: row.get("quality")?,
-        extraction_source: row.get("extraction_source")?,
-        dwell_ms: row.get("dwell_ms")?,
-        read_completed: row.get::<_, i64>("read_completed")? != 0,
-        liked: row.get::<_, i64>("liked")? != 0,
-    })
 }
 
 pub fn mark_article_opened(conn: &Connection, id: &str) -> Result<(), AppError> {
@@ -468,7 +423,7 @@ pub fn get_article(conn: &Connection, id: &str) -> Result<Option<Article>, AppEr
     conn.query_row(
         &format!("SELECT {ARTICLE_COLS} FROM articles WHERE id=?1"),
         params![id],
-        map_article,
+        row_as::<Article>,
     )
     .optional()
     .map_err(AppError::from)
@@ -479,7 +434,7 @@ pub fn get_article_by_url(conn: &Connection, url: &str) -> Result<Option<Article
     conn.query_row(
         &format!("SELECT {ARTICLE_COLS} FROM articles WHERE url=?1"),
         params![url],
-        map_article,
+        row_as::<Article>,
     )
     .optional()
     .map_err(AppError::from)
@@ -596,7 +551,7 @@ pub fn list_unassessed_rss_articles(conn: &Connection) -> Result<Vec<Article>, A
         ))
         ?;
     let rows = stmt
-        .query_map([], map_article)
+        .query_map([], row_as::<Article>)
         ?
         .collect::<Result<Vec<_>, _>>()
         ?;
@@ -687,7 +642,7 @@ pub fn list_all_rss_articles(conn: &Connection) -> Result<Vec<Article>, AppError
         ))
         ?;
     let rows = stmt
-        .query_map([], map_article)
+        .query_map([], row_as::<Article>)
         ?
         .collect::<Result<Vec<_>, _>>()
         ?;
@@ -774,7 +729,7 @@ fn recent_articles_where(
          LIMIT ?1"
     ))?;
     let rows = stmt
-        .query_map(params![limit as i64], map_article)?
+        .query_map(params![limit as i64], row_as::<Article>)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }

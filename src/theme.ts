@@ -13,7 +13,7 @@ export function isThemePref(v: string): v is ThemePref {
   return (THEME_PREFS as readonly string[]).includes(v);
 }
 
-export function resolveTheme(
+function resolveTheme(
   pref: ThemePref,
   systemDark: boolean,
 ): "light" | "dark" {

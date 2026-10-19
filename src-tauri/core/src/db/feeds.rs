@@ -1,5 +1,5 @@
 use crate::error::AppError;
-use super::{curated_feeds, FeedCategory, FeedSource};
+use super::{curated_feeds, row_as, FeedCategory, FeedSource};
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
@@ -73,7 +73,7 @@ pub fn list_feeds(conn: &Connection) -> Result<Vec<FeedSource>, AppError> {
         )
         ?;
     let rows = stmt
-        .query_map([], map_feed)
+        .query_map([], row_as::<FeedSource>)
         ?
         .collect::<Result<Vec<_>, _>>()
         ?;
@@ -172,7 +172,7 @@ pub fn list_feed_categories(conn: &Connection) -> Result<Vec<FeedCategory>, AppE
         .prepare("SELECT id,label,builtin FROM feed_categories ORDER BY builtin DESC, label")
         ?;
     let rows = stmt
-        .query_map([], map_category)
+        .query_map([], row_as::<FeedCategory>)
         ?
         .collect::<Result<Vec<_>, _>>()
         ?;
@@ -212,7 +212,7 @@ pub fn get_feed_category(conn: &Connection, id: &str) -> Result<Option<FeedCateg
     conn.query_row(
         "SELECT id,label,builtin FROM feed_categories WHERE id=?1",
         params![id],
-        map_category,
+        row_as::<FeedCategory>,
     )
     .optional()
     .map_err(AppError::from)
@@ -380,11 +380,11 @@ pub(crate) fn removed_feed_ids(conn: &Connection) -> Result<std::collections::Ha
 fn find_feed_by_url(conn: &Connection, url: &str) -> Result<Option<FeedSource>, AppError> {    conn.query_row(
         "SELECT id,name,category,url,enabled,origin,description,etag,last_fetched_at,fulltext_ratio,priority,last_new_article_at,kind FROM feed_sources WHERE url=?1",
         params![url],
-        map_feed,
+        row_as::<FeedSource>,
     )
     .optional()
     .map_err(AppError::from)
-    
+
 }
 
 fn feed_id_exists(conn: &Connection, id: &str) -> Result<bool, AppError> {
@@ -396,24 +396,6 @@ fn feed_id_exists(conn: &Connection, id: &str) -> Result<bool, AppError> {
         )
         ?;
     Ok(n > 0)
-}
-
-fn map_feed(row: &rusqlite::Row<'_>) -> rusqlite::Result<FeedSource> {
-    Ok(FeedSource {
-        id: row.get(0)?,
-        name: row.get(1)?,
-        category: row.get(2)?,
-        url: row.get(3)?,
-        enabled: row.get::<_, i64>(4)? == 1,
-        origin: row.get(5)?,
-        description: row.get(6)?,
-        etag: row.get(7)?,
-        last_fetched_at: row.get(8)?,
-        fulltext_ratio: row.get(9)?,
-        priority: row.get(10)?,
-        last_new_article_at: row.get(11)?,
-        kind: row.get(12)?,
-    })
 }
 
 /// Persist per-refresh metadata: HTTP ETag (for 304 reuse), fetch timestamp,
@@ -495,14 +477,6 @@ pub fn prune_stale_feeds(conn: &Connection, days: i64) -> Result<Vec<String>, Ap
         pruned.push(name);
     }
     Ok(pruned)
-}
-
-fn map_category(row: &rusqlite::Row<'_>) -> rusqlite::Result<FeedCategory> {
-    Ok(FeedCategory {
-        id: row.get(0)?,
-        label: row.get(1)?,
-        builtin: row.get::<_, i64>(2)? == 1,
-    })
 }
 
 pub fn slugify_id(raw: &str) -> String {

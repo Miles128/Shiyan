@@ -78,16 +78,21 @@ fn ingest(db: &DbState, raw: &str) -> Result<(String, i64), AppError> {
     db::clear_catalog(&tx)?;
     let mut inserted = 0i64;
     {
-        let mut reader = CsvRecords::new(raw.as_bytes());
-        let mut fields: Vec<String> = Vec::with_capacity(9);
+        let mut reader = catalog_reader(raw);
+        let mut records = reader.records();
+        let csv_err =
+            |e: csv::Error| AppError::msg(format!("Gutenberg 目录解析失败：{e}"));
         // Header first; the column count is the only shape check worth doing.
-        if !reader.next_into(&mut fields) || fields.len() < 9 {
+        let header = records.next().transpose().map_err(csv_err)?;
+        if header.map(|h| h.len() < 9).unwrap_or(true) {
             return Err(AppError::msg("Gutenberg 目录格式不符（表头缺失）"));
         }
-        while reader.next_into(&mut fields) {
-            if fields.len() < 9 {
+        for record in records {
+            let record = record.map_err(csv_err)?;
+            if record.len() < 9 {
                 continue;
             }
+            let fields: Vec<&str> = record.iter().collect();
             let Some(book) = to_catalog_book(&fields) else {
                 continue;
             };
@@ -103,29 +108,29 @@ fn ingest(db: &DbState, raw: &str) -> Result<(String, i64), AppError> {
     Ok((stamp, inserted))
 }
 
-fn to_catalog_book(fields: &[String]) -> Option<CatalogBook> {
+fn to_catalog_book(fields: &[&str]) -> Option<CatalogBook> {
     let gid: i64 = fields[0].trim().parse().ok()?;
     if !fields[1].trim().eq_ignore_ascii_case("Text") {
         return None;
     }
     // Language can be a `;`-separated set; keep anything with English in it.
-    let language = &fields[4];
+    let language = fields[4];
     if !language
         .split(';')
         .any(|l| l.trim().eq_ignore_ascii_case("en"))
     {
         return None;
     }
-    let title = crate::books::text::collapse_spaces(&fields[3]);
+    let title = crate::books::text::collapse_spaces(fields[3]);
     if title.is_empty() {
         return None;
     }
     Some(CatalogBook {
         gid,
         title,
-        authors: crate::books::text::collapse_spaces(&fields[5]),
+        authors: crate::books::text::collapse_spaces(fields[5]),
         issued: fields[2].trim().to_string(),
-        shelf: shelf_from_bookshelves(&fields[8]),
+        shelf: shelf_from_bookshelves(fields[8]),
         subjects: fields[6]
             .chars()
             .take(SUBJECTS_MAX_CHARS)
@@ -171,61 +176,14 @@ pub fn search(
     Ok(books)
 }
 
-/// Minimal RFC 4180 reader over bytes. Gutenberg titles do contain commas,
-/// quotes and semicolons, so a `split(',')` would corrupt rows.
-struct CsvRecords<'a> {
-    src: &'a [u8],
-    pos: usize,
-}
-
-impl<'a> CsvRecords<'a> {
-    fn new(src: &'a [u8]) -> Self {
-        Self { src, pos: 0 }
-    }
-
-    /// Fill `out` with the next record's fields; false at end of input.
-    fn next_into(&mut self, out: &mut Vec<String>) -> bool {
-        out.clear();
-        if self.pos >= self.src.len() {
-            return false;
-        }
-        let mut field: Vec<u8> = Vec::new();
-        let mut quoted = false;
-        let mut any = false;
-        while self.pos < self.src.len() {
-            let b = self.src[self.pos];
-            self.pos += 1;
-            any = true;
-            match b {
-                b'"' if quoted => {
-                    if self.src.get(self.pos) == Some(&b'"') {
-                        field.push(b'"');
-                        self.pos += 1;
-                    } else {
-                        quoted = false;
-                    }
-                }
-                b'"' => quoted = true,
-                b',' if !quoted => out.push(take_field(&mut field)),
-                b'\r' if !quoted => {}
-                b'\n' if !quoted => {
-                    out.push(take_field(&mut field));
-                    return true;
-                }
-                _ => field.push(b),
-            }
-        }
-        if !field.is_empty() || !out.is_empty() {
-            out.push(take_field(&mut field));
-            return any;
-        }
-        false
-    }
-}
-
-fn take_field(field: &mut Vec<u8>) -> String {
-    let bytes = std::mem::take(field);
-    String::from_utf8_lossy(&bytes).into_owned()
+/// RFC 4180 reader for the catalog CSV. Gutenberg titles do contain commas,
+/// quotes and semicolons, so a `split(',')` would corrupt rows. `flexible`
+/// because ragged rows are skipped by the caller instead of aborting ingest.
+fn catalog_reader(raw: &str) -> csv::Reader<&[u8]> {
+    csv::ReaderBuilder::new()
+        .has_headers(false)
+        .flexible(true)
+        .from_reader(raw.as_bytes())
 }
 
 #[cfg(test)]
@@ -236,31 +194,29 @@ mod tests {
     fn parses_quoted_fields_with_commas_and_newlines() {
         let csv = "Text#,Type,Issued,Title,Language,Authors,Subjects,LoCC,Bookshelves\n\
                    2701,Text,2001-07-01,\"Moby Dick; Or, The Whale\",en,\"Melville, Herman, 1819-1891\",\"Whaling -- Fiction; Sea stories\",PS,\"Best Books Ever Listings; Category: Novels\"\n";
-        let mut reader = CsvRecords::new(csv.as_bytes());
-        let mut fields = Vec::new();
-        assert!(reader.next_into(&mut fields));
-        assert_eq!(fields[0], "Text#");
-        assert!(reader.next_into(&mut fields));
-        assert_eq!(fields.len(), 9);
-        assert_eq!(fields[3], "Moby Dick; Or, The Whale");
-        assert_eq!(fields[5], "Melville, Herman, 1819-1891");
+        let mut reader = catalog_reader(csv);
+        let mut records = reader.records();
+        let header = records.next().expect("header row").expect("header parses");
+        assert_eq!(header.get(0), Some("Text#"));
+        let record = records.next().expect("data row").expect("row parses");
+        assert_eq!(record.len(), 9);
+        assert_eq!(record.get(3), Some("Moby Dick; Or, The Whale"));
+        assert_eq!(record.get(5), Some("Melville, Herman, 1819-1891"));
+        let fields: Vec<&str> = record.iter().collect();
         let book = to_catalog_book(&fields).expect("row accepted");
         assert_eq!(book.gid, 2701);
         assert_eq!(book.shelf, "Novels");
-        assert!(!reader.next_into(&mut fields));
+        assert!(records.next().is_none());
     }
 
     #[test]
     fn skips_non_text_and_non_english_rows() {
-        let mut fields: Vec<String> = ["1", "Sound", "", "Title", "en", "", "", "", ""]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let mut fields: Vec<&str> = vec!["1", "Sound", "", "Title", "en", "", "", "", ""];
         assert!(to_catalog_book(&fields).is_none());
-        fields[1] = "Text".into();
-        fields[4] = "fr".into();
+        fields[1] = "Text";
+        fields[4] = "fr";
         assert!(to_catalog_book(&fields).is_none());
-        fields[4] = "en;fr".into();
+        fields[4] = "en;fr";
         assert!(to_catalog_book(&fields).is_some());
     }
 

@@ -1,31 +1,9 @@
-use super::MemoryItem;
+use super::{row_as, MemoryItem};
 use crate::error::AppError;
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 
-fn map_memory(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryItem> {
-    let collocations_json: String = row.get(5)?;
-    let collocations: Vec<String> =
-        serde_json::from_str(&collocations_json).unwrap_or_default();
-    Ok(MemoryItem {
-        id: row.get(0)?,
-        kind: row.get(1)?,
-        term: row.get(2)?,
-        definition_zh: row.get(3)?,
-        word_type: row.get(4)?,
-        collocations,
-        context_sentence: row.get(6)?,
-        article_id: row.get(7)?,
-        status: row.get(8)?,
-        interval_days: row.get(9)?,
-        reps: row.get(10)?,
-        consecutive_know: row.get(11)?,
-        next_review_at: row.get(12)?,
-        created_at: row.get(13)?,
-    })
-}
-
-const MEMORY_SELECT: &str = "SELECT id,kind,term,definition_zh,word_type,collocations_json,context_sentence,article_id,status,interval_days,reps,consecutive_know,next_review_at,created_at FROM memory_items";
+const MEMORY_SELECT: &str = "SELECT id,kind,term,definition_zh,word_type,collocations_json AS collocations,context_sentence,article_id,status,interval_days,reps,consecutive_know,next_review_at,created_at FROM memory_items";
 
 pub fn insert_memory(conn: &Connection, item: &MemoryItem) -> Result<(), AppError> {
     let collocations_json = serde_json::to_string(&item.collocations)?;
@@ -79,14 +57,14 @@ pub fn list_memory(
     sql.push_str(" ORDER BY created_at DESC");
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt
-        .query_map(rusqlite::params_from_iter(values.iter()), map_memory)?
+        .query_map(rusqlite::params_from_iter(values.iter()), row_as::<MemoryItem>)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
 
 pub fn get_memory(conn: &Connection, id: &str) -> Result<Option<MemoryItem>, AppError> {
     let sql = format!("{MEMORY_SELECT} WHERE id=?1");
-    conn.query_row(&sql, params![id], map_memory)
+    conn.query_row(&sql, params![id], row_as::<MemoryItem>)
         .optional()
         .map_err(AppError::from)
 }
@@ -100,7 +78,7 @@ pub fn get_memory_by_term(
     let sql = format!(
         "{MEMORY_SELECT} WHERE kind=?1 AND lower(term)=lower(?2) ORDER BY created_at ASC LIMIT 1"
     );
-    conn.query_row(&sql, params![kind, term.trim()], map_memory)
+    conn.query_row(&sql, params![kind, term.trim()], row_as::<MemoryItem>)
         .optional()
         .map_err(AppError::from)
 }
@@ -151,7 +129,7 @@ pub fn due_memory(conn: &Connection, kind: Option<&str>) -> Result<Vec<MemoryIte
     sql.push_str(" ORDER BY next_review_at ASC LIMIT 50");
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt
-        .query_map(rusqlite::params_from_iter(values.iter()), map_memory)?
+        .query_map(rusqlite::params_from_iter(values.iter()), row_as::<MemoryItem>)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }

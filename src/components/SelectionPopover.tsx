@@ -61,7 +61,7 @@ export function clampPopoverPosition(input: {
 }
 
 /** Split a stored POS string ("v./n.") for display. */
-export function posLabel(pos: string): string {
+function posLabel(pos: string): string {
   return pos
     .split("/")
     .map((p) => p.trim())

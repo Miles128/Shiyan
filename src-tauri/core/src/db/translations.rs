@@ -1,5 +1,5 @@
 use crate::error::AppError;
-use super::TranslationRow;
+use super::{row_as, TranslationRow};
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -13,7 +13,7 @@ pub fn get_translation(
         "SELECT id,article_id,scope,scope_key,source_text,translated_text,model FROM translations
          WHERE article_id=?1 AND scope=?2 AND scope_key=?3",
         params![article_id, scope, scope_key],
-        map_translation,
+        row_as::<TranslationRow>,
     )
     .optional()
     .map_err(AppError::from)
@@ -64,7 +64,7 @@ pub fn list_paragraph_translations(
         )
         ?;
     let rows = stmt
-        .query_map(params![article_id], map_translation)
+        .query_map(params![article_id], row_as::<TranslationRow>)
         ?
         .collect::<Result<Vec<_>, _>>()
         ?;
@@ -91,16 +91,4 @@ pub fn delete_paragraph_translations(
         params![article_id],
     )?;
     Ok(removed)
-}
-
-fn map_translation(row: &rusqlite::Row<'_>) -> rusqlite::Result<TranslationRow> {
-    Ok(TranslationRow {
-        id: row.get(0)?,
-        article_id: row.get(1)?,
-        scope: row.get(2)?,
-        scope_key: row.get(3)?,
-        source_text: row.get(4)?,
-        translated_text: row.get(5)?,
-        model: row.get(6)?,
-    })
 }

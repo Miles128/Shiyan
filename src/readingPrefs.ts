@@ -108,19 +108,19 @@ export function defaultReadingPrefs(): ReadingPrefs {
   };
 }
 
-export function isReaderFontId(v: unknown): v is ReaderFontId {
+function isReaderFontId(v: unknown): v is ReaderFontId {
   return typeof v === "string" && FONT_IDS.has(v);
 }
 
-export function isReaderFontSize(v: unknown): v is ReaderFontSize {
+function isReaderFontSize(v: unknown): v is ReaderFontSize {
   return typeof v === "number" && FONT_SIZES.has(v);
 }
 
-export function isReaderLineHeight(v: unknown): v is ReaderLineHeight {
+function isReaderLineHeight(v: unknown): v is ReaderLineHeight {
   return typeof v === "number" && LINE_HEIGHTS.has(v);
 }
 
-export function isReaderLineWidthId(v: unknown): v is ReaderLineWidthId {
+function isReaderLineWidthId(v: unknown): v is ReaderLineWidthId {
   return typeof v === "string" && LINE_WIDTHS.has(v);
 }
 

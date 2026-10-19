@@ -175,77 +175,85 @@ fn extract_docx(bytes: &[u8]) -> Result<String, AppError> {
 
 /// Pull paragraph text from WordprocessingML (`<w:p>` / `<w:t>`).
 fn docx_xml_to_text(xml: &str) -> String {
+    let mut reader = quick_xml::Reader::from_str(xml);
+    // Best-effort extraction: a stray `&` or mismatched tag must not throw
+    // away the whole document, so stay tolerant instead of strict.
+    reader.config_mut().allow_dangling_amp = true;
+    reader.config_mut().check_end_names = false;
+
     let mut out = String::new();
     let mut para = String::new();
     let mut in_t = false;
-    let mut tag = String::new();
-    let mut chars = xml.chars().peekable();
 
-    while let Some(ch) = chars.next() {
-        if ch == '<' {
-            tag.clear();
-            for c in chars.by_ref() {
-                if c == '>' {
-                    break;
-                }
-                tag.push(c);
-            }
-            let name = tag.split_whitespace().next().unwrap_or("");
-            if name == "w:t" || name.starts_with("w:t ") {
-                in_t = true;
-            } else if name == "/w:t" {
-                in_t = false;
-            } else if name == "/w:p" {
-                let line = para.trim();
-                if !line.is_empty() {
-                    if !out.is_empty() {
-                        out.push_str("\n\n");
-                    }
-                    out.push_str(line);
-                }
-                para.clear();
-            } else if name == "w:tab" || name.starts_with("w:tab ") {
-                para.push('\t');
-            } else if name == "w:br" || name.starts_with("w:br ") {
-                para.push('\n');
-            }
-        } else if in_t {
-            if ch == '&' {
-                let mut ent = String::new();
-                while let Some(&c) = chars.peek() {
-                    chars.next();
-                    if c == ';' {
-                        break;
-                    }
-                    ent.push(c);
-                    if ent.len() > 10 {
-                        break;
+    loop {
+        let event = match reader.read_event() {
+            Ok(event) => event,
+            Err(_) => break,
+        };
+        use quick_xml::events::Event;
+        match event {
+            Event::Start(e) => match e.name().as_ref() {
+                b"w:t" => in_t = true,
+                b"w:tab" => para.push('\t'),
+                b"w:br" => para.push('\n'),
+                _ => {}
+            },
+            Event::Empty(e) => match e.name().as_ref() {
+                b"w:tab" => para.push('\t'),
+                b"w:br" => para.push('\n'),
+                _ => {}
+            },
+            Event::End(e) => match e.name().as_ref() {
+                b"w:t" => in_t = false,
+                b"w:p" => flush_paragraph(&mut out, &mut para),
+                _ => {}
+            },
+            Event::Text(t) => {
+                if in_t {
+                    if let Ok(text) = t.xml10_content() {
+                        para.push_str(&text);
                     }
                 }
-                para.push_str(decode_xml_entity(&ent));
-            } else {
-                para.push(ch);
             }
+            Event::CData(c) => {
+                if in_t {
+                    if let Ok(text) = c.xml10_content() {
+                        para.push_str(&text);
+                    }
+                }
+            }
+            Event::GeneralRef(r) => {
+                if in_t {
+                    para.push_str(&decode_xml_ref(&r));
+                }
+            }
+            Event::Eof => break,
+            _ => {}
         }
     }
 
-    if !para.trim().is_empty() {
-        if !out.is_empty() {
-            out.push_str("\n\n");
-        }
-        out.push_str(para.trim());
-    }
+    flush_paragraph(&mut out, &mut para);
     out
 }
 
-fn decode_xml_entity(ent: &str) -> &str {
-    match ent {
-        "amp" => "&",
-        "lt" => "<",
-        "gt" => ">",
-        "quot" => "\"",
-        "apos" => "'",
-        _ => " ",
+fn flush_paragraph(out: &mut String, para: &mut String) {
+    let line = para.trim();
+    if !line.is_empty() {
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        out.push_str(line);
+    }
+    para.clear();
+}
+
+/// Resolve an `&entity;` / `&#x2019;` reference (quick-xml strips the `&`/`;`).
+/// Unknown entities keep their literal text instead of silently vanishing.
+fn decode_xml_ref(r: &quick_xml::events::BytesRef<'_>) -> String {
+    let raw = format!("&{};", String::from_utf8_lossy(r));
+    match quick_xml::escape::unescape(&raw) {
+        Ok(text) => text.into_owned(),
+        Err(_) => raw,
     }
 }
 
@@ -272,6 +280,26 @@ mod tests {
 </w:document>"#;
         let text = docx_xml_to_text(xml);
         assert_eq!(text, "First paragraph.\n\nSecond & last.");
+    }
+
+    #[test]
+    fn docx_xml_numeric_entities() {
+        let xml = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>It&#x2019;s &#8220;fine&#8221; &amp; well.</w:t></w:r></w:p>
+  </w:body>
+</w:document>"#;
+        assert_eq!(docx_xml_to_text(xml), "It’s “fine” & well.");
+    }
+
+    #[test]
+    fn docx_xml_empty_tags_and_breaks() {
+        let xml = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>A</w:t><w:tab/><w:t>B</w:t><w:br/><w:t>C</w:t></w:r></w:p>
+  </w:body>
+</w:document>"#;
+        assert_eq!(docx_xml_to_text(xml), "A\tB\nC");
     }
 
     #[test]

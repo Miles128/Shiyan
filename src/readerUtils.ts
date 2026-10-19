@@ -85,7 +85,7 @@ export function urlLooksLikeMarkdown(url: string): boolean {
 }
 
 /** True if at least two distinct Markdown signals appear in the text. */
-export function contentLooksLikeMarkdown(text: string): boolean {
+function contentLooksLikeMarkdown(text: string): boolean {
   let hits = 0;
   for (const re of MD_HEURISTICS) {
     if (re.test(text)) {

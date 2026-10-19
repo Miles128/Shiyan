@@ -33,7 +33,7 @@ export const DIFFICULTY_LEVELS = [
 ] as const;
 export type DifficultyLevel = (typeof DIFFICULTY_LEVELS)[number];
 
-export const DIFFICULTY_LABELS: Record<DifficultyLevel, string> = {
+const DIFFICULTY_LABELS: Record<DifficultyLevel, string> = {
   easy: "简单",
   normal: "普通",
   hard: "较难",

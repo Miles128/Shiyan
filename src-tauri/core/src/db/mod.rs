@@ -9,7 +9,6 @@ mod books_catalog;
 mod curated_feeds;
 mod feeds;
 mod known;
-mod lookups;
 mod memory;
 mod translations;
 
@@ -17,7 +16,6 @@ pub use articles::*;
 pub use books_catalog::*;
 pub use curated_feeds::*;
 pub use known::*;
-pub use lookups::*;
 pub use memory::*;
 pub use feeds::*;
 pub use translations::*;
@@ -29,6 +27,19 @@ use std::sync::{Mutex, MutexGuard};
 use ts_rs::TS;
 
 use crate::error::AppError;
+
+/// Map one row onto a domain struct by column name: struct fields must match
+/// the SELECT list (see the per-table `*_SELECT` constants). This replaces the
+/// hand-written `map_*` row mappers — serde fills the struct and ignores any
+/// extra column. Rows are `rusqlite::Result` so the value drops straight into
+/// `query_map` / `query_row`.
+pub fn row_as<T: serde::de::DeserializeOwned>(row: &rusqlite::Row<'_>) -> rusqlite::Result<T> {
+    serde_rusqlite::from_row(row).map_err(|e| match e {
+        // Real column type errors already are rusqlite errors; keep them intact.
+        serde_rusqlite::Error::Rusqlite(inner) => inner,
+        other => rusqlite::Error::ToSqlConversionFailure(Box::new(other)),
+    })
+}
 
 /// Two pooled connections to the same WAL database. Writes serialize on the
 /// write connection; reads run concurrently on the read connection instead of
@@ -348,6 +359,10 @@ pub struct MemoryItem {
     pub definition_zh: String,
     /// Part of speech for words; usage label (idiom / collocation …) for phrases.
     pub word_type: String,
+    /// Stored as a JSON array string in `memory_items.collocations_json`
+    /// (aliased back to `collocations` in the SELECT), so the row mapper
+    /// parses it here instead of in every query.
+    #[serde(deserialize_with = "de_collocations")]
     pub collocations: Vec<String>,
     pub context_sentence: String,
     pub article_id: Option<String>,
@@ -359,6 +374,16 @@ pub struct MemoryItem {
     pub consecutive_know: i64,
     pub next_review_at: String,
     pub created_at: String,
+}
+
+/// Parse the JSON array string stored in `memory_items.collocations_json`.
+/// Lenient on purpose: a corrupt row degrades to an empty list instead of
+/// failing the whole query (same as the old row mapper).
+fn de_collocations<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<String>, D::Error> {
+    let raw = String::deserialize(deserializer)?;
+    Ok(serde_json::from_str(&raw).unwrap_or_default())
 }
 
 const DB_FILE_NAME: &str = "shiyan.db";
@@ -628,6 +653,7 @@ CREATE TABLE IF NOT EXISTS known_words (
     term TEXT PRIMARY KEY,
     created_at TEXT NOT NULL
 );
+-- 查词历史功能已移除，表与索引零引用，仅保留 schema 免迁移。
 CREATE TABLE IF NOT EXISTS lookup_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     term TEXT NOT NULL,

@@ -43,20 +43,4 @@ export const apiMemory = {
   listKnownWords: () => typedInvoke("list_known_words"),
   addKnownWord: (term: string) => typedInvoke("add_known_word", { term }),
   removeKnownWord: (term: string) => typedInvoke("remove_known_word", { term }),
-
-  // Lookup history: every term resolved via the selection popover.
-  recordLookup: (term: string, context?: string | null, articleId?: string | null) =>
-    typedInvoke("record_lookup", {
-      term,
-      context: context ?? null,
-      articleId: articleId ?? null,
-    }),
-  listLookups: (search?: string, limit?: number, offset?: number) =>
-    typedInvoke("list_lookups", {
-      search: search ?? null,
-      limit: limit ?? null,
-      offset: offset ?? null,
-    }),
-  deleteLookup: (id: number) => typedInvoke("delete_lookup", { id }),
-  clearLookups: () => typedInvoke("clear_lookups"),
 };

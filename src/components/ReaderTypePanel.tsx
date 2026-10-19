@@ -1,40 +1,21 @@
 import { type AppConfig } from "../api";
-import { normalizeConfig, useAppConfig } from "../store";
+import { useAppConfig } from "../store";
 import { useToast } from "./Toaster";
-import { THEME_LABELS, THEME_PREFS, type ThemePref } from "../theme";
+import { type ThemePref } from "../theme";
 import {
-  READER_FONTS,
-  READER_FONT_SIZES,
-  READER_LINE_HEIGHTS,
-  READER_LINE_WIDTHS,
   type ReaderFontId,
   type ReaderFontSize,
   type ReaderLineHeight,
   type ReaderLineWidthId,
 } from "../readingPrefs";
-
-type ChipOption = { value: string | number; label: string };
-
-const THEME_CHIPS: ChipOption[] = THEME_PREFS.map((p) => ({
-  value: p,
-  label: THEME_LABELS[p],
-}));
-const FONT_CHIPS: ChipOption[] = READER_FONTS.map((f) => ({
-  value: f.id,
-  label: f.label,
-}));
-const SIZE_CHIPS: ChipOption[] = READER_FONT_SIZES.map((s) => ({
-  value: s.value,
-  label: String(s.value),
-}));
-const HEIGHT_CHIPS: ChipOption[] = READER_LINE_HEIGHTS.map((h) => ({
-  value: h.value,
-  label: String(h.value),
-}));
-const WIDTH_CHIPS: ChipOption[] = READER_LINE_WIDTHS.map((w) => ({
-  value: w.id,
-  label: w.label,
-}));
+import {
+  FONT_OPTIONS,
+  FONT_SIZE_OPTIONS,
+  LINE_HEIGHT_OPTIONS,
+  LINE_WIDTH_OPTIONS,
+  THEME_OPTIONS,
+  type PrefOption,
+} from "../prefOptions";
 
 function ChipRow({
   label,
@@ -44,7 +25,7 @@ function ChipRow({
 }: {
   label: string;
   value: string | number;
-  options: readonly ChipOption[];
+  options: readonly PrefOption[];
   onPick: (v: string | number) => void;
 }) {
   return (
@@ -58,7 +39,7 @@ function ChipRow({
             className={o.value === value ? "tag-chip active" : "tag-chip"}
             onClick={() => onPick(o.value)}
           >
-            {o.label}
+            {o.short ?? o.label}
           </button>
         ))}
       </div>
@@ -85,7 +66,9 @@ export default function ReaderTypePanel() {
     const maxBefore = doc.scrollHeight - window.innerHeight;
     const ratio = maxBefore > 0 ? window.scrollY / maxBefore : 0;
 
-    const next = normalizeConfig({ ...cfg, ...patch });
+    // Values come from fixed pick lists, so the merged config is already
+    // normalized; the store's `save` normalizes again as the safety net.
+    const next = { ...cfg, ...patch };
     save(next)
       .then(() => {
         if (!touchesLayout) return;
@@ -108,35 +91,35 @@ export default function ReaderTypePanel() {
       <ChipRow
         label="主题"
         value={cfg.theme}
-        options={THEME_CHIPS}
+        options={THEME_OPTIONS}
         onPick={(v) => update({ theme: v as ThemePref })}
       />
       <ChipRow
         label="字体"
         value={cfg.reader_font}
-        options={FONT_CHIPS}
+        options={FONT_OPTIONS}
         onPick={(v) => update({ reader_font: v as ReaderFontId })}
       />
       <ChipRow
         label="字号"
         value={cfg.reader_font_size}
-        options={SIZE_CHIPS}
+        options={FONT_SIZE_OPTIONS}
         onPick={(v) => update({ reader_font_size: v as ReaderFontSize })}
       />
       <ChipRow
         label="行距"
         value={cfg.reader_line_height}
-        options={HEIGHT_CHIPS}
+        options={LINE_HEIGHT_OPTIONS}
         onPick={(v) => update({ reader_line_height: v as ReaderLineHeight })}
       />
       <ChipRow
         label="行宽"
         value={cfg.reader_line_width}
-        options={WIDTH_CHIPS}
+        options={LINE_WIDTH_OPTIONS}
         onPick={(v) => update({ reader_line_width: v as ReaderLineWidthId })}
       />
       <ChipRow
-        label="难词注释"
+        label="超难词释义"
         value={cfg.show_hard_word_gloss ? "on" : "off"}
         options={[
           { value: "on", label: "显示" },
