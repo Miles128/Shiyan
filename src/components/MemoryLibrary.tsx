@@ -121,7 +121,7 @@ export default function MemoryLibrary({
               {tab === "learning" ? (
                 <button
                   type="button"
-                  className="vocab-icon-btn"
+                  className="icon-btn square"
                   title="标为已掌握"
                   aria-label={`标为已掌握：${v.term}`}
                   onClick={() => void setStatus(v.id, "mastered")}
@@ -133,7 +133,7 @@ export default function MemoryLibrary({
               ) : (
                 <button
                   type="button"
-                  className="vocab-icon-btn"
+                  className="icon-btn square"
                   title="恢复学习"
                   aria-label={`恢复学习：${v.term}`}
                   onClick={() => void setStatus(v.id, "learning")}
@@ -146,7 +146,7 @@ export default function MemoryLibrary({
               )}
               <button
                 type="button"
-                className="vocab-icon-btn danger"
+                className="icon-btn square danger"
                 title="删除"
                 aria-label={`删除：${v.term}`}
                 onClick={() => void remove(v.id)}

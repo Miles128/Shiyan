@@ -158,6 +158,23 @@ a.brand-mini:hover {
   color: var(--accent);
 }
 
+/* Fixed 26px square variant: popover header buttons and library row actions. */
+.icon-btn.square {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 7px;
+}
+
+/* Toggled-on state for icon buttons that carry an `active` class. */
+.icon-btn.active {
+  color: var(--accent);
+}
+
+.icon-btn.danger:hover {
+  color: var(--danger);
+}
+
 .main {
   min-width: 0;
   flex: 1;

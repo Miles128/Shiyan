@@ -151,7 +151,7 @@ export default function SelectionPopover({
         </div>
         <div className="pop-icons">
           <button
-            className={`pop-icon-btn${speaking && speakTarget?.kind === "word" ? " active" : ""}`}
+            className={`icon-btn square${speaking && speakTarget?.kind === "word" ? " active" : ""}`}
             type="button"
             title={speaking && speakTarget?.kind === "word" ? "停止朗读" : "朗读"}
             aria-label={speaking && speakTarget?.kind === "word" ? "停止朗读" : "朗读"}
@@ -170,7 +170,7 @@ export default function SelectionPopover({
             )}
           </button>
           <button
-            className="pop-icon-btn"
+            className="icon-btn square"
             type="button"
             title="关闭"
             aria-label="关闭"

@@ -61,25 +61,6 @@
   margin-left: auto;
 }
 
-.vocab-icon-btn {
-  appearance: none;
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  width: 26px;
-  height: 26px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 7px;
-  padding: 0;
-}
-
-.vocab-icon-btn.danger:hover {
-  color: var(--danger);
-}
-
 .linklike.danger {
   color: var(--danger);
 }
