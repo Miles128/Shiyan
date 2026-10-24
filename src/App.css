@@ -219,7 +219,9 @@ body.is-resizing {
   text-align: center;
 }
 
-.tree-label {
+/* Single-line truncation, shared by sidebar labels. */
+.tree-label,
+.source-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -286,12 +288,6 @@ body.is-sorting {
   height: 8px;
   border-radius: 50%;
   flex: 0 0 8px;
-}
-
-.source-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* Library article count for the source — the sidebar's sort key. */
@@ -414,7 +410,8 @@ body.is-sorting {
   backdrop-filter: none;
 }
 
-.topbar-nav {
+.topbar-nav,
+.topbar-actions {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -440,16 +437,9 @@ a.brand-mini:hover {
   border-radius: 8px;
 }
 
-.topbar-link.active,
-.topbar-link:hover {
+.topbar-link.active {
   color: var(--ink);
   background: var(--accent-soft);
-}
-
-.topbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
 }
 
 /* Shared borderless icon-button recipe (topbar / reader);
@@ -484,9 +474,12 @@ a.brand-mini:hover {
   }
 }
 
+/* Shared hover/focus fill for borderless icon buttons and chips. */
 .topbar-btn:hover,
 .topbar-btn.active,
-.icon-btn:hover {
+.topbar-link:hover,
+.icon-btn:hover,
+.tag-chip:hover {
   color: var(--ink);
   background: var(--accent-soft);
 }
@@ -864,14 +857,17 @@ a.brand-mini:hover {
   margin: 0 0 14px;
 }
 
-.filter-row {
+/* Wrapping filter rows (Home filter bar, reader type panel, ManageFeeds). */
+.filter-row,
+.feeds-cat-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
 }
 
-.filter-group {
+.filter-group,
+.type-panel-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -911,11 +907,6 @@ a.brand-mini:hover {
   padding: 5px 10px;
   border-radius: 999px;
   cursor: pointer;
-}
-
-.tag-chip:hover {
-  color: var(--ink);
-  background: var(--accent-soft);
 }
 
 .tag-chip.active {
@@ -971,7 +962,9 @@ a.brand-mini:hover {
   margin: 16px 28px 0;
 }
 
-.article-list {
+/* Shared list reset: articles and library entries are separated by a rule. */
+.article-list,
+.vocab-list {
   list-style: none;
   padding: 0;
   margin: 0;
@@ -1487,7 +1480,8 @@ mark.vocab-hit:hover {
 }
 
 .pop-icon-btn:hover,
-.pop-icon-btn:focus-visible {
+.pop-icon-btn:focus-visible,
+.vocab-icon-btn:hover {
   color: var(--ink);
   background: var(--accent-soft);
 }
@@ -1618,11 +1612,6 @@ mark.vocab-hit:hover {
   padding: 0;
 }
 
-.vocab-icon-btn:hover {
-  color: var(--ink);
-  background: var(--accent-soft);
-}
-
 .vocab-icon-btn.danger:hover {
   color: var(--danger);
 }
@@ -1631,32 +1620,8 @@ mark.vocab-hit:hover {
   color: var(--danger);
 }
 
-.vocab-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-}
-
 .vocab-list > li + li {
   border-top: 1px solid var(--line);
-}
-
-.vocab-card {
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  padding: 14px 2px;
-  box-shadow: none;
-}
-
-.vocab-head {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  margin-bottom: 6px;
 }
 
 .context {
@@ -2093,20 +2058,7 @@ details.settings-section > summary {
   color: var(--muted);
 }
 
-.type-panel-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-/* ManageFeeds: inline category add, compact feed rows, collapsible add block. */
-.feeds-cat-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-
+/* ManageFeeds: inline category add, collapsible add block. */
 .feeds-cat-add {
   display: inline-flex;
   align-items: center;
