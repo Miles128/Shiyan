@@ -1,10 +1,9 @@
 //! Reader payload assembly: the full article plus its reflowed paragraphs and
 //! cached paragraph translations, in one invoke result.
 
-use crate::db::{self, Article, TranslationRow};
+use crate::db::{self, Article, DbState, TranslationRow};
 use crate::error::AppError;
 use crate::feeds;
-use rusqlite::Connection;
 use serde::Serialize;
 use ts_rs::TS;
 
@@ -34,14 +33,26 @@ pub struct ArticleView {
     pub book: Option<BookContext>,
 }
 
-pub fn load_article_view(conn: &Connection, id: &str) -> Result<Option<ArticleView>, AppError> {
-    let Some(article) = db::get_article(conn, id)? else {
+/// Assemble the reader payload. Locks are held only while rows are fetched;
+/// reflow runs on the borrowed article after the read lock is released, so a
+/// long article never blocks other readers.
+pub fn load_article_view(state: &DbState, id: &str) -> Result<Option<ArticleView>, AppError> {
+    let article = {
+        let conn = state.lock_read()?;
+        db::get_article(&conn, id)?
+    };
+    let Some(article) = article else {
         return Ok(None);
     };
     let paragraphs = feeds::split_paragraphs(&article.content_text);
-    let translations = db::list_paragraph_translations(conn, id)?;
+    let translations = {
+        let conn = state.lock_read()?;
+        db::list_paragraph_translations(&conn, id)?
+    };
+    // Only queried for chapters so ordinary articles pay nothing.
     let book = if article.origin == "book" {
-        db::book_chapter_position(conn, id)?.map(|pos| BookContext {
+        let conn = state.lock_read()?;
+        db::book_chapter_position(&conn, id)?.map(|pos| BookContext {
             title: article.source.clone(),
             chapter_no: pos.chapter_no,
             chapter_count: pos.chapter_count,

@@ -1,8 +1,5 @@
 //! URL canonicalization and cross-source title dedup.
 
-#[cfg(test)]
-use std::collections::HashSet;
-
 /// Tracking parameters stripped by [`canonical_article_url`].
 const TRACKING_PARAMS: &[&str] = &[
     "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "utm_id",
@@ -56,14 +53,9 @@ const FUZZY_MIN_TOKENS: usize = 8;
 /// Token-set overlap at which two headlines count as the same story.
 const JACCARD_DUP: f64 = 0.85;
 
-/// Near-duplicate headline test across sources:
-/// - exact match after normalization always counts;
-/// - otherwise Jaccard ≥ [`JACCARD_DUP`] on token sets, but only for
-///   headline-sized titles (≥[`FUZZY_MIN_TOKENS`] tokens) so short unrelated
-///   headlines can't collide.
-///
-/// This is the rule [`TitleIndex`] applies in bulk; the two are kept honest by
-/// `title_index_agrees_with_pairwise_rule`.
+/// Near-duplicate headline test across sources. Test-only reference rule:
+/// [`TitleIndex`] applies the same logic in bulk.
+#[cfg(test)]
 pub(crate) fn is_near_duplicate_title(a: &str, b: &str) -> bool {
     let ta = title_tokens(a);
     let tb = title_tokens(b);
@@ -138,19 +130,4 @@ impl TitleIndex {
             union > 0 && (inter as f64) / (union as f64) >= JACCARD_DUP
         })
     }
-}
-
-/// Split candidate URLs into new vs already-known. Returns (new_urls, skipped_count).
-#[cfg(test)]
-pub fn partition_new_urls(candidates: &[String], known: &HashSet<String>) -> (Vec<String>, usize) {
-    let mut new_urls = Vec::new();
-    let mut skipped = 0usize;
-    for url in candidates {
-        if known.contains(url) {
-            skipped += 1;
-        } else {
-            new_urls.push(url.clone());
-        }
-    }
-    (new_urls, skipped)
 }

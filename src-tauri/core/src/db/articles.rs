@@ -10,24 +10,6 @@ const ARTICLE_COLS: &str =
 /// Home list only needs an excerpt (known% + blurb). Full body stays on get_article.
 pub const LIST_EXCERPT_CHARS: i32 = 6000;
 
-#[cfg(test)]
-pub fn list_articles(
-    conn: &Connection,
-    category: Option<&str>,
-    limit: Option<i64>,
-    offset: Option<i64>,
-) -> Result<Vec<ArticleListItem>, AppError> {
-    query_articles(
-        conn,
-        &ArticleQuery {
-            category,
-            ..Default::default()
-        },
-        limit,
-        offset,
-    )
-}
-
 /// Limit clamped: SQLite treats a negative LIMIT as "no limit", so a bad
 /// caller could request the whole table (× 6000-char excerpt per row).
 const MAX_LIST_LIMIT: i64 = 500;
@@ -423,17 +405,6 @@ pub fn get_article(conn: &Connection, id: &str) -> Result<Option<Article>, AppEr
     
 }
 
-pub fn get_article_by_url(conn: &Connection, url: &str) -> Result<Option<Article>, AppError> {
-    conn.query_row(
-        &format!("SELECT {ARTICLE_COLS} FROM articles WHERE url=?1"),
-        params![url],
-        row_as::<Article>,
-    )
-    .optional()
-    .map_err(AppError::from)
-    
-}
-
 pub fn list_article_urls(conn: &Connection) -> Result<std::collections::HashSet<String>, AppError> {
     let mut stmt = conn
         .prepare("SELECT url FROM articles")
@@ -776,17 +747,19 @@ pub fn engaged_titles(conn: &Connection) -> Result<Vec<(String, f64)>, AppError>
     Ok(rows.into_iter().filter(|(_, w)| *w > 0.0).collect())
 }
 
-#[cfg(test)]
-pub fn upsert_article(conn: &Connection, a: &Article) -> Result<(), AppError> {
-    // Legacy alias used by older tests; refresh path uses insert_article_if_new.
-    let _ = insert_article_if_new(conn, a)?;
-    Ok(())
-}
-
 pub fn delete_article(conn: &Connection, id: &str) -> Result<(), AppError> {
     // translations CASCADE; vocab.article_id SET NULL (schema v3).
     conn.execute("DELETE FROM articles WHERE id=?1", params![id])
         ?;
+    Ok(())
+}
+
+pub fn set_article_summary_zh(conn: &Connection, id: &str, summary_zh: &str) -> Result<(), AppError> {
+    conn.execute(
+        "UPDATE articles SET summary_zh=?1 WHERE id=?2",
+        params![summary_zh, id],
+    )
+    ?;
     Ok(())
 }
 
@@ -885,13 +858,4 @@ pub fn book_chapter_position(
         prev_id: at(chapter_no - 1)?,
         next_id: at(chapter_no + 1)?,
     }))
-}
-
-pub fn set_article_summary_zh(conn: &Connection, id: &str, summary_zh: &str) -> Result<(), AppError> {
-    conn.execute(
-        "UPDATE articles SET summary_zh=?1 WHERE id=?2",
-        params![summary_zh, id],
-    )
-    ?;
-    Ok(())
 }

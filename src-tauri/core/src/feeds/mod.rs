@@ -41,9 +41,7 @@ pub(crate) use cleanup::{
     purge_summary_only_articles,
 };
 #[cfg(test)]
-pub(crate) use dedup::{
-    canonical_article_url, is_near_duplicate_title, partition_new_urls, TitleIndex,
-};
+pub(crate) use dedup::{canonical_article_url, is_near_duplicate_title, TitleIndex};
 #[cfg(test)]
 pub(crate) use extract::{html_to_text, title_from_html};
 #[cfg(test)]

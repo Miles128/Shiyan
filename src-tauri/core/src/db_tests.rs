@@ -70,6 +70,23 @@ fn sample_article(id: &str) -> db::Article {
     }
 }
 
+fn list_articles(
+    conn: &rusqlite::Connection,
+    category: Option<&str>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<Vec<db::ArticleListItem>, crate::error::AppError> {
+    db::query_articles(
+        conn,
+        &db::ArticleQuery {
+            category,
+            ..Default::default()
+        },
+        limit,
+        offset,
+    )
+}
+
 #[test]
 fn db_seeds_feeds_and_stores_article() {
     let tmp = TmpDb::new("test");
@@ -112,8 +129,8 @@ fn db_seeds_feeds_and_stores_article() {
         open_count: 0,
         ..Default::default()
     };
-    db::upsert_article(&conn, &article).unwrap();
-    let list = db::list_articles(&conn, Some("tech"), None, None).unwrap();
+    db::insert_article_if_new(&conn, &article).unwrap();
+    let list = list_articles(&conn, Some("tech"), None, None).unwrap();
     assert_eq!(list.len(), 1);
 }
 
@@ -260,7 +277,7 @@ fn insert_article_if_new_is_idempotent() {
     };
     assert!(!db::insert_article_if_new(&conn, &second).unwrap());
 
-    let stored = db::get_article_by_url(&conn, "https://example.com/same")
+    let stored = db::get_article(&conn, "id-1")
         .unwrap()
         .expect("exists");
     assert_eq!(stored.id, "id-1");
@@ -318,29 +335,6 @@ fn list_article_urls_supports_incremental_skip() {
 fn split_paragraphs_works() {
     let parts = feeds::split_paragraphs("A\n\nB\n\n\nC");
     assert_eq!(parts, vec!["A", "B", "C"]);
-}
-
-#[test]
-fn filter_new_entries_skips_known_urls() {
-    let known = std::collections::HashSet::from([
-        "https://example.com/old".to_string(),
-        "https://example.com/also".to_string(),
-    ]);
-    let candidates = vec![
-        "https://example.com/old".to_string(),
-        "https://example.com/new".to_string(),
-        "https://example.com/also".to_string(),
-        "https://example.com/fresh".to_string(),
-    ];
-    let (new_urls, skipped) = feeds::partition_new_urls(&candidates, &known);
-    assert_eq!(skipped, 2);
-    assert_eq!(
-        new_urls,
-        vec![
-            "https://example.com/new".to_string(),
-            "https://example.com/fresh".to_string()
-        ]
-    );
 }
 
 #[test]
@@ -425,7 +419,7 @@ fn purge_never_touches_book_chapters() {
     let removed_lang = feeds::purge_non_english_articles(&conn).unwrap();
     assert_eq!(removed_lang, 0, "imported articles must survive language purge");
     assert_eq!(
-        db::list_articles(&conn, None, Some(100), Some(0))
+        list_articles(&conn, None, Some(100), Some(0))
             .unwrap()
             .len(),
         2
@@ -666,7 +660,7 @@ fn list_articles_returns_excerpt_not_full_body() {
     };
     db::insert_article_if_new(&conn, &a).unwrap();
 
-    let listed = db::list_articles(&conn, None, Some(1), Some(0)).unwrap();
+    let listed = list_articles(&conn, None, Some(1), Some(0)).unwrap();
     assert_eq!(listed.len(), 1);
     assert_eq!(
         listed[0].excerpt.len(),
@@ -700,9 +694,9 @@ fn list_articles_paginates() {
         };
         db::insert_article_if_new(&conn, &a).unwrap();
     }
-    let page1 = db::list_articles(&conn, None, Some(2), Some(0)).unwrap();
-    let page2 = db::list_articles(&conn, None, Some(2), Some(2)).unwrap();
-    let page3 = db::list_articles(&conn, None, Some(2), Some(4)).unwrap();
+    let page1 = list_articles(&conn, None, Some(2), Some(0)).unwrap();
+    let page2 = list_articles(&conn, None, Some(2), Some(2)).unwrap();
+    let page3 = list_articles(&conn, None, Some(2), Some(4)).unwrap();
     assert_eq!(page1.len(), 2);
     assert_eq!(page2.len(), 2);
     assert_eq!(page3.len(), 1);
@@ -1085,8 +1079,8 @@ fn vocab_dedup_by_term_and_delete_article_detaches() {
         article_id: Some("a1".into()),
         ..sample_vocab("v1", "Ubiquitous", "2020-01-01T00:00:00Z")
     };
-    db::upsert_article(&conn, &sample_article("a1")).unwrap();
-    db::upsert_article(&conn, &sample_article("a2")).unwrap();
+    db::insert_article_if_new(&conn, &sample_article("a1")).unwrap();
+    db::insert_article_if_new(&conn, &sample_article("a2")).unwrap();
     db::insert_memory(&conn, &item).unwrap();
 
     // Case-insensitive lookup re-adding the same term returns the same row.
@@ -1478,7 +1472,7 @@ fn article_foreign_keys_cascade_and_reject_orphans() {
     let tmp = TmpDb::new("fk");
     let conn = tmp.conn();
 
-    db::upsert_article(&conn, &sample_article("a1")).unwrap();
+    db::insert_article_if_new(&conn, &sample_article("a1")).unwrap();
     db::save_translation(&conn, "a1", "paragraph", "0", "Hello", "你好", "test").unwrap();
     db::insert_memory(
         &conn,
@@ -1532,7 +1526,7 @@ fn article_foreign_keys_cascade_and_reject_orphans() {
 fn reflow_cleanup_clears_paragraph_translations_once() {
     let tmp = TmpDb::new("reflow");
     let conn = tmp.conn();
-    db::upsert_article(&conn, &sample_article("a1")).unwrap();
+    db::insert_article_if_new(&conn, &sample_article("a1")).unwrap();
     db::save_translation(&conn, "a1", "paragraph", "0", "Hello", "你好", "test").unwrap();
     db::save_translation(&conn, "a1", "selection", "abc", "hi", "嗨", "test").unwrap();
 
@@ -1582,7 +1576,7 @@ fn stats_day_is_offset_aware_not_a_substring() {
 fn vacuum_into_file_produces_valid_backup() {
     let tmp = TmpDb::new("vacuum");
     let conn = tmp.conn();
-    db::upsert_article(&conn, &sample_article("a1")).unwrap();
+    db::insert_article_if_new(&conn, &sample_article("a1")).unwrap();
     // VACUUM INTO refuses an existing file; a fresh guarded folder guarantees
     // the destination is absent, which the old pre-clear remove_file only hoped for.
     let dest = tmp.dir().join("out.db");
@@ -1604,24 +1598,27 @@ fn vacuum_into_file_produces_valid_backup() {
 #[test]
 fn article_view_loads_paragraphs_and_translations() {
     let tmp = TmpDb::new("view");
-    let conn = tmp.conn();
-    db::upsert_article(&conn, &sample_article("a1")).unwrap();
-    conn.execute(
-        "UPDATE articles SET content_text = ?1 WHERE id = 'a1'",
-        ["First para.\n\nSecond para."],
-    )
-    .unwrap();
-    db::save_translation(&conn, "a1", "paragraph", "0", "First para.", "第一段", "test")
+    let state = tmp.state();
+    {
+        let conn = state.lock_write().unwrap();
+        db::insert_article_if_new(&conn, &sample_article("a1")).unwrap();
+        conn.execute(
+            "UPDATE articles SET content_text = ?1 WHERE id = 'a1'",
+            ["First para.\n\nSecond para."],
+        )
         .unwrap();
+        db::save_translation(&conn, "a1", "paragraph", "0", "First para.", "第一段", "test")
+            .unwrap();
+    }
 
-    let view = crate::article_view::load_article_view(&conn, "a1")
+    let view = crate::article_view::load_article_view(&state, "a1")
         .unwrap()
         .expect("present");
     assert_eq!(view.article.id, "a1");
     assert_eq!(view.paragraphs, vec!["First para.", "Second para."]);
     assert_eq!(view.translations.len(), 1);
     assert_eq!(view.translations[0].translated_text, "第一段");
-    assert!(crate::article_view::load_article_view(&conn, "missing")
+    assert!(crate::article_view::load_article_view(&state, "missing")
         .unwrap()
         .is_none());
 }

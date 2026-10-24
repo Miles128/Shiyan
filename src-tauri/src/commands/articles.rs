@@ -135,41 +135,7 @@ pub fn get_article_view(
     state: tauri::State<'_, DbState>,
     id: String,
 ) -> Result<Option<article_view::ArticleView>, AppError> {
-    // Fetch the row under a short read lock, reflow (CPU work) without holding
-    // the lock, then fetch cached translations. Keeps long articles from
-    // blocking other readers.
-    let article = {
-        let conn = state.lock_read()?;
-        db::get_article(&conn, &id)?
-    };
-    let Some(article) = article else {
-        return Ok(None);
-    };
-    let paragraphs = shiyan_core::feeds::split_paragraphs(&article.content_text);
-    let translations = {
-        let conn = state.lock_read()?;
-        db::list_paragraph_translations(&conn, &id)?
-    };
-    // Chapter position for book chapters: same read-lock pattern, and only
-    // queried for chapters so ordinary articles pay nothing.
-    let book = if article.origin == "book" {
-        let conn = state.lock_read()?;
-        db::book_chapter_position(&conn, &id)?.map(|pos| article_view::BookContext {
-            title: article.source.clone(),
-            chapter_no: pos.chapter_no,
-            chapter_count: pos.chapter_count,
-            prev_id: pos.prev_id,
-            next_id: pos.next_id,
-        })
-    } else {
-        None
-    };
-    Ok(Some(article_view::ArticleView {
-        article,
-        paragraphs,
-        translations,
-        book,
-    }))
+    article_view::load_article_view(&state, &id)
 }
 
 #[tauri::command]

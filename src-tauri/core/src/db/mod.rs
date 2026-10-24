@@ -509,12 +509,6 @@ pub fn open_db(path: PathBuf, run_migrations: bool) -> Result<Connection, AppErr
     Ok(conn)
 }
 
-/// Back-compat wrapper for tests and callers that open a single connection.
-#[cfg(test)]
-pub fn open_db_single(path: PathBuf) -> Result<Connection, AppError> {
-    open_db(path, true)
-}
-
 /// Snapshot the database before a version bump, so a bad migration can be
 /// rolled back by hand. Best-effort: never blocks startup.
 pub(crate) fn backup_before_migration(conn: &Connection, path: &std::path::Path) {

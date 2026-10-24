@@ -3,7 +3,6 @@ use super::filters::{
     body_defect, choose_article_body, is_blocked_content, is_readable_article_body,
     looks_truncated, rss_trust_chars, MIN_IMPORTED_BODY_CHARS, TRUST_RSS_FULLTEXT_CHARS,
 };
-use std::collections::HashSet;
 
 #[test]
 fn blocks_link_roundups_and_transcripts() {
@@ -688,15 +687,6 @@ fn accepts_english_content() {
     assert!(is_english_article(None, title, &content));
     assert!(is_english_article(Some("en-US"), title, &content));
     assert!(!is_english_article(Some("fr"), title, &content));
-}
-
-#[test]
-fn partition_skips_known() {
-    let known = HashSet::from(["https://a".into()]);
-    let (new_urls, skipped) =
-        partition_new_urls(&["https://a".into(), "https://b".into()], &known);
-    assert_eq!(skipped, 1);
-    assert_eq!(new_urls, vec!["https://b".to_string()]);
 }
 
 #[test]
