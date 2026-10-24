@@ -61,7 +61,6 @@ export default function Settings() {
   );
   const [tab, setTab] = useState<Tab>("reading");
   const [backingUp, setBackingUp] = useState(false);
-  const [restoring, setRestoring] = useState(false);
   // 5B: 刷新进行中禁用备份（后端同样拒绝，双保险）。
   const [refreshing, setRefreshing] = useState(false);
   useEffect(() => {
@@ -89,23 +88,6 @@ export default function Settings() {
       toast.err(String(e));
     } finally {
       setBackingUp(false);
-    }
-  }
-
-  async function restoreDb() {
-    const confirmed = window.confirm(
-      "恢复将覆盖当前全部数据（文章、订阅源、生词与短语）。\n" +
-        "重启前当前数据不会丢失；恢复在重启拾言后生效，且会自动留一份 .pre-restore.bak。\n\n确定继续？",
-    );
-    if (!confirmed) return;
-    setRestoring(true);
-    try {
-      const msg = await api.restoreDatabase();
-      toast.ok(msg);
-    } catch (e) {
-      if (!String(e).includes("未选择备份文件")) toast.err(String(e));
-    } finally {
-      setRestoring(false);
     }
   }
 
@@ -231,10 +213,9 @@ export default function Settings() {
       )}
       {tab === "data" && (
         <section className="settings-section">
-          <h2>备份与恢复</h2>
+          <h2>备份</h2>
           <p className="muted">
             备份生成整个数据库的一致快照（文章、订阅源、生词与短语）。
-            恢复时选择备份文件，重启拾言后生效；当前数据会自动备份为 .pre-restore.bak。
           </p>
           <div className="data-actions">
             <button
@@ -244,13 +225,6 @@ export default function Settings() {
               title={refreshing ? "刷新进行中，请刷新结束后再备份" : undefined}
             >
               {backingUp ? "备份中…" : refreshing ? "刷新中，稍后备份" : "备份数据库"}
-            </button>
-            <button
-              className="btn"
-              onClick={() => void restoreDb()}
-              disabled={restoring}
-            >
-              {restoring ? "校验中…" : "恢复数据库…"}
             </button>
           </div>
         </section>

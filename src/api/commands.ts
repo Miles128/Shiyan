@@ -143,5 +143,4 @@ export interface Commands {
 
   // ── data ──────────────────────────────────────────────────────────────
   backup_database: { args: void; ret: string | null };
-  restore_database: { args: void; ret: string };
 }

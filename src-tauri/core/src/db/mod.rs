@@ -380,90 +380,6 @@ pub fn db_path(app_data: PathBuf) -> PathBuf {
     app_data.join(DB_FILE_NAME)
 }
 
-/// Staged backup file swapped in on the next launch (restore flow).
-pub fn pending_restore_path(app_data: &std::path::Path) -> PathBuf {
-    app_data.join(format!("{DB_FILE_NAME}.pending-restore"))
-}
-
-/// Validate a candidate backup file: it must be a readable SQLite database
-/// with our key tables and not from a newer app version. Returns user_version.
-pub fn validate_backup_file(path: &std::path::Path) -> Result<i64, AppError> {
-    let conn = Connection::open_with_flags(
-        path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )?;
-    let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    // Compare against the highest version any shipped backup can carry, not
-    // LATEST_VERSION: pre-collapse backups stamp up to 19 and stay importable
-    // (migrate normalizes their counter on next launch).
-    if version > MAX_IMPORTABLE_VERSION {
-        return Err(AppError::msg(format!(
-            "备份来自更新版本的 App（schema v{version}），当前最高支持 v{MAX_IMPORTABLE_VERSION}"
-        )));
-    }
-    for table in ["articles", "feed_sources", "memory_items"] {
-        let has: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
-                rusqlite::params![table],
-                |row| row.get(0),
-            )?;
-        if has == 0 {
-            return Err(AppError::msg(format!("备份缺少关键表：{table}")));
-        }
-    }
-    Ok(version)
-}
-
-/// If a restore file was staged (via restore_database), swap it in BEFORE any
-/// connections open. The current database is kept as `*.pre-restore.bak`.
-/// Returns the backup path when a swap happened.
-///
-/// A corrupt staged file must never brick the next launch: validation failure
-/// quarantines the pending file (`*.pending-restore.invalid`) and startup
-/// continues with the existing database.
-pub fn apply_pending_restore(app_data: &std::path::Path) -> Result<Option<PathBuf>, AppError> {
-    let pending = pending_restore_path(app_data);
-    if !pending.exists() {
-        return Ok(None);
-    }
-    if let Err(e) = validate_backup_file(&pending) {
-        let invalid = pending.with_extension("pending-restore.invalid");
-        let _ = std::fs::remove_file(&invalid);
-        if std::fs::rename(&pending, &invalid).is_err() {
-            let _ = std::fs::remove_file(&pending);
-        }
-        eprintln!("staged restore failed validation ({e}); quarantined, keeping current DB");
-        return Ok(None);
-    }
-    let db = db_path(app_data.to_path_buf());
-    // Checkpoint the WAL first so the backup captures *all* committed
-    // transactions. Removing -wal/-shm before copying loses anything not yet
-    // merged into the main database file.
-    if db.exists() {
-        {
-            let conn = Connection::open(&db)?;
-            let _ = conn.pragma_update(None, "wal_checkpoint", "TRUNCATE");
-            let _ = conn.execute_batch("PRAGMA journal_mode = DELETE;");
-        }
-        // Now safe to remove side files — they are empty after checkpoint.
-        for suffix in ["-wal", "-shm"] {
-            let side = PathBuf::from(format!("{}{}", db.display(), suffix));
-            if side.exists() {
-                std::fs::remove_file(&side)?;
-            }
-        }
-        let backup = PathBuf::from(format!("{}.pre-restore.bak", db.display()));
-        std::fs::copy(&db, &backup)?;
-        drop(backup);
-    }
-    std::fs::rename(&pending, &db)?;
-    Ok(Some(PathBuf::from(format!(
-        "{}.pre-restore.bak",
-        db.display()
-    ))))
-}
-
 /// Consistent whole-database snapshot via `VACUUM INTO`. The target path is
 /// passed as a bound parameter (covered by test against the bundled SQLite),
 /// so no filename quoting is needed. Must run outside a transaction, and the
@@ -662,11 +578,6 @@ CREATE INDEX IF NOT EXISTS idx_memory_article ON memory_items(article_id);
 /// DDL inside `migrate` when `stored < N`. Stamp each version with its own
 /// number (never `LATEST_VERSION`) so later steps are not skipped.
 pub(crate) const LATEST_VERSION: i64 = 5;
-
-/// The highest user_version any pre-collapse database can carry. Backup files
-/// written before the collapse (`.premigrate-v*.bak`) stamp up to 19; imports
-/// must accept them even though the counter now tops out lower.
-const MAX_IMPORTABLE_VERSION: i64 = 19;
 
 /// Drop the deprecated `articles.title_zh` column (v2). Tolerates "no such
 /// column": fresh baselines never had it.

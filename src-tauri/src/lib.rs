@@ -15,8 +15,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
-            // Swap in a staged restore file (if any) before connections open.
-            db::apply_pending_restore(&dir)?;
             let state = db::DbState::open(db::db_path(dir))?;
             {
                 // One-time library pass: drop empty articles, stamp never-measured
@@ -32,7 +30,6 @@ pub fn run() {
             commands::config::get_config,
             commands::config::save_config_cmd,
             commands::data::backup_database,
-            commands::data::restore_database,
             commands::articles::list_rank_window,
             commands::articles::list_library,
             commands::articles::get_article_view,

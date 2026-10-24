@@ -52,35 +52,3 @@ pub async fn backup_database(
     let _ = std::fs::remove_file(&tmp);
     Ok(Some(dest.to_string_lossy().into_owned()))
 }
-
-/// Stage a backup file for restore. The file is validated, copied next to the
-/// live database, and swapped in on the next launch (before any connection
-/// opens). Returns the confirmation message.
-#[tauri::command]
-pub async fn restore_database(app: tauri::AppHandle) -> Result<String, AppError> {
-    let dialog_app = app.clone();
-    let picked = tauri::async_runtime::spawn_blocking(move || {
-        dialog_app
-            .dialog()
-            .file()
-            .add_filter("SQLite 数据库", &["db"])
-            .blocking_pick_file()
-    })
-    .await
-    .map_err(|e| AppError::msg(e.to_string()))?;
-    let Some(picked) = picked else {
-        return Err(AppError::msg("未选择备份文件"));
-    };
-    let src = picked
-        .into_path()
-        .map_err(|e| AppError::msg(e.to_string()))?;
-    db::validate_backup_file(&src)?;
-
-    let app_data = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::msg(e.to_string()))?;
-    let staged = db::pending_restore_path(&app_data);
-    std::fs::copy(&src, &staged)?;
-    Ok("恢复文件已就绪。重启拾言后生效，当前数据会自动备份为 .pre-restore.bak。".into())
-}

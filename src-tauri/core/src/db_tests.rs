@@ -1416,10 +1416,11 @@ fn vacuum_into_file_produces_valid_backup() {
 
     db::vacuum_into_file(&conn, &dest).unwrap();
     assert!(dest.exists(), "VACUUM INTO must write the snapshot");
-    // The snapshot passes the same validation as a user-supplied backup file.
-    let version = db::validate_backup_file(&dest).unwrap();
-    assert!(version >= 1);
     let check = rusqlite::Connection::open(&dest).unwrap();
+    let version: i64 = check
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, db::LATEST_VERSION);
     let count: i64 = check
         .query_row("SELECT COUNT(*) FROM articles WHERE id='a1'", [], |row| {
             row.get(0)
