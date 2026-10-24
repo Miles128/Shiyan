@@ -293,6 +293,122 @@ fn refresh_ingests_feed_and_honors_etag() {
     );
     assert_eq!(second.feeds_unchanged, 1, "304 makes refresh a no-op");
     assert_eq!(second.added_or_updated, 0);
+    server.join().expect("server thread");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A feed body that grows must still upgrade an article already in the library,
+/// and one that shrinks must never downgrade it. This is the behaviour the
+/// known-url length shortcut in `download_feed_articles` could in principle
+/// break, so it is pinned here rather than left to the unit test of the bound.
+#[test]
+fn known_url_upgrade_survives_the_length_shortcut() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let line = "The quick brown fox jumps over the lazy dog near the quiet river bank. ";
+    let short_body: String = line.repeat(45);
+    let long_body: String = line.repeat(90);
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+    let port = listener.local_addr().expect("port").port();
+    let now = chrono::Utc::now().to_rfc2822();
+
+    // Three feed fetches, no ETag: the second serves a longer body, the third
+    // goes back to the shorter one. No page fetches are expected, because every
+    // body clears the RSS-trust bar.
+    let calls = Arc::new(AtomicUsize::new(0));
+    let server_calls = Arc::clone(&calls);
+    let server = std::thread::spawn(move || {
+        let feed_xml = |prose: &str| {
+            format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+                 <rss version=\"2.0\" xmlns:content=\"http://purl.org/rss/1.0/modules/content/\">\n\
+                 <channel><title>Growth Feed</title><link>http://127.0.0.1:{port}/</link>\
+                 <description>test</description>\n\
+                 <item><title>Story That Grows</title><link>http://127.0.0.1:{port}/p1</link>\
+                 <guid isPermaLink=\"false\">growth-p1</guid><pubDate>{now}</pubDate>\
+                 <description>A long story.</description>\
+                 <content:encoded><![CDATA[<p>{prose}</p>]]></content:encoded></item>\n\
+                 </channel></rss>"
+            )
+        };
+        for stream in listener.incoming().take(3) {
+            let mut stream = stream.expect("accept");
+            let mut buf = vec![0u8; 8192];
+            let mut head = Vec::new();
+            loop {
+                let n = stream.read(&mut buf).expect("read request");
+                if n == 0 {
+                    break;
+                }
+                head.extend_from_slice(&buf[..n]);
+                if head.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let n = server_calls.fetch_add(1, Ordering::SeqCst);
+            let body = match n {
+                1 => feed_xml(&long_body),
+                _ => feed_xml(&short_body),
+            };
+            let _ = stream.write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/rss+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            );
+        }
+    });
+
+    let dir = std::env::temp_dir().join(format!("shiyan-upgrade-it-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let db = crate::db::DbState::open(crate::db::db_path(dir.clone())).unwrap();
+    {
+        let conn = db.lock_write().unwrap();
+        let test_feed = crate::db::subscribe_feed(
+            &conn,
+            "Growth Feed",
+            "tech",
+            &format!("http://127.0.0.1:{port}/feed.xml"),
+            "integration fixture",
+        )
+        .unwrap();
+        for feed in crate::db::list_feeds(&conn).unwrap() {
+            if feed.id != test_feed.id {
+                crate::db::set_feed_enabled(&conn, &feed.id, false).unwrap();
+            }
+        }
+    }
+    let cfg = crate::config::AppConfig::default();
+    let stored_len = |db: &crate::db::DbState| -> usize {
+        let conn = db.lock_read().unwrap();
+        crate::db::list_article_content_lengths(&conn)
+            .unwrap()
+            .values()
+            .copied()
+            .sum()
+    };
+
+    let first = refresh_feeds(&db, &cfg, |_: RefreshProgress| {}).expect("refresh 1");
+    assert_eq!(first.added_or_updated, 1, "the story is ingested once");
+    let baseline = stored_len(&db);
+
+    let second = refresh_feeds(&db, &cfg, |_: RefreshProgress| {}).expect("refresh 2");
+    assert_eq!(second.updated, 1, "a longer feed body must upgrade the row");
+    assert!(
+        stored_len(&db) > baseline,
+        "the upgrade has to actually land"
+    );
+    let grown = stored_len(&db);
+
+    let third = refresh_feeds(&db, &cfg, |_: RefreshProgress| {}).expect("refresh 3");
+    assert_eq!(third.updated, 0, "a shorter body must not rewrite the row");
+    assert_eq!(third.added_or_updated, 0);
+    assert_eq!(stored_len(&db), grown, "the library never shrinks");
 
     server.join().expect("server thread");
     let _ = std::fs::remove_dir_all(&dir);
@@ -477,6 +593,58 @@ fn title_index_dedups_across_sources() {
     assert!(!index.is_dup("Earnings Season Begins With a Whimper"));
     index.insert("Earnings Season Begins With a Whimper Amid Rate Anxiety This Quarter");
     assert!(index.is_dup("Earnings Season Begins With a Whimper Amid Rate Anxiety This Quarter"));
+}
+
+/// The index is a bulk implementation of the pairwise rule, so the two must
+/// never disagree — including on the titles too short to be fuzzy-matched,
+/// which the index deliberately does not store.
+#[test]
+fn title_index_agrees_with_pairwise_rule() {
+    let stored = [
+        "Fed Signals Open Door to Rate Cuts in September Meeting Minutes",
+        "The Federal Reserve Signaled It Could Cut Interest Rates at Meeting",
+        "Markets slide again",
+        "Earnings Season Begins With a Whimper",
+        "How remote work reshaped suburban housing markets across America",
+    ];
+    let probes = [
+        // Exact after normalization.
+        "fed signals, open door to rate cuts in september meeting minutes!",
+        // One word different in a long headline: near-duplicate.
+        "The Federal Reserve Signaled It Might Cut Interest Rates at Meeting",
+        // Same words, different order beyond the threshold.
+        "Meeting Rates Interest Cut It Signaled Reserve Federal The Also Today",
+        // Too short to fuzzy-match; only an exact hit counts.
+        "Markets slide today",
+        // Unrelated.
+        "A deep dive into the history of jazz piano in New Orleans",
+    ];
+    let index = TitleIndex::new(stored.iter().map(|t| (t.to_string(), String::new())).collect());
+    for probe in probes {
+        let expected = stored
+            .iter()
+            .any(|d| is_near_duplicate_title(probe, d));
+        assert_eq!(
+            index.is_dup(probe),
+            expected,
+            "index disagrees with the pairwise rule for {probe:?}"
+        );
+    }
+}
+
+/// The known-url shortcut must only fire when the feed body cannot possibly
+/// beat what is already stored, and must stay out of the way otherwise.
+#[test]
+fn rss_shortcut_only_skips_bodies_that_cannot_win() {
+    // A teaser body against a stored full article: skip.
+    assert!(rss_cannot_beat_stored(1_500, 10_000));
+    // A full-text feed body around the stored size: still needs the real check.
+    assert!(!rss_cannot_beat_stored(11_000, 10_000));
+    // Tag-free content, exactly as long as what we stored: not an upgrade,
+    // but the margin is small enough that we refuse to guess.
+    assert!(!rss_cannot_beat_stored(10_000, 10_000));
+    assert!(!rss_cannot_beat_stored(10_000, 10_001));
+    assert!(rss_cannot_beat_stored(10_000, 10_000 + 1_024 + 625));
 }
 
 #[test]

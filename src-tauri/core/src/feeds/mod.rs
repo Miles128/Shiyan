@@ -53,7 +53,7 @@ pub(crate) use filters::is_summary_only_body;
 #[cfg(test)]
 pub(crate) use net::ensure_public_http_url;
 #[cfg(test)]
-pub(crate) use pipeline::select_enabled_feeds;
+pub(crate) use pipeline::{rss_cannot_beat_stored, select_enabled_feeds};
 
 /// The one auto-ingest length bar, in words: a real learning session needs
 /// substance, not a blurb. Every gate that decides whether a fetched body
