@@ -1,13 +1,16 @@
-//! One-time audits, retention purges, and body repair for stored RSS articles.
+//! One-time audits and retention purges for stored RSS articles.
 
-use super::extract::extract_article_page;
 use super::filters::{is_blocked_content, is_english_article, is_readable_article_body};
-use super::net::http_client;
 use super::MIN_ARTICLE_WORDS;
-use crate::db::{self, Article, DbState};
+use crate::db::{self, Article};
 use crate::error::AppError;
 use chrono::Utc;
 use rusqlite::{params, Connection};
+
+/// Startup cleanup marker: empty-body deletion, legacy word-count backfill,
+/// and removal of already-stored roundups/transcripts all only ever need one
+/// pass over the library.
+const STARTUP_CLEANUP_KEY: &str = "startup_cleanup_v1";
 
 /// One-time backfill: re-audit every stored RSS body with the current
 /// readability rules and delete anything that is only a synopsis, a
@@ -147,39 +150,24 @@ pub(crate) fn purge_summary_only_articles(conn: &Connection) -> Result<usize, Ap
     Ok(short)
 }
 
-/// Re-fetch RSS articles whose body lost paragraph breaks and replace the body
-/// when the fresh extraction keeps them. Returns how many were repaired.
-pub fn repair_missing_paragraphs(db: &DbState, limit: usize) -> Result<usize, AppError> {
-    let targets = {
-        let conn = db.lock_read()?;
-        db::articles_without_paragraphs(&conn, limit)?
-    };
-    let client = http_client()?;
-    let mut fixed = 0usize;
-    for article in targets {
-        let Ok(page) = extract_article_page(&client, &article.url) else {
-            continue;
-        };
-        if !page.text.contains('\n') || !is_readable_article_body(&page.text) {
-            continue;
-        }
-        let new_words = page.text.split_whitespace().count();
-        let old_words = article.content_text.split_whitespace().count();
-        // Never replace a decent body with a much shorter extraction.
-        if new_words * 2 < old_words {
-            continue;
-        }
-        let conn = db.lock_write()?;
-        db::set_article_body(&conn, &article.id, &page.text, new_words as i64, "page")?;
-        fixed += 1;
+/// Startup maintenance that only needs one pass over the library: drop empty
+/// bodies, stamp never-measured word counts, and remove already-stored
+/// roundups / transcripts. Runs once (guarded by `app_meta`); a failed pass
+/// leaves the marker unset so the next launch retries.
+pub fn run_startup_cleanup_once(conn: &Connection) -> Result<usize, AppError> {
+    if db::get_meta(conn, STARTUP_CLEANUP_KEY)?.is_some() {
+        return Ok(0);
     }
-    Ok(fixed)
+    let stamped = db::backfill_word_counts(conn)?;
+    let removed = purge_blocked_articles(conn)?;
+    db::set_meta(conn, STARTUP_CLEANUP_KEY, "done")?;
+    Ok(stamped + removed)
 }
 
 /// One-time cleanup: delete already-stored RSS articles that match the
-/// roundup / transcript filters. User imports (url/file) and articles the
-/// learner liked or is still reading are never touched.
-pub fn purge_blocked_articles(conn: &Connection) -> Result<usize, AppError> {
+/// roundup / transcript filters. Articles the learner liked or is still
+/// reading are never touched.
+fn purge_blocked_articles(conn: &Connection) -> Result<usize, AppError> {
     let mut removed = 0usize;
     for article in db::list_all_rss_articles(conn)? {
         if !is_protected(&article) && is_blocked_content(&article.title, &article.content_text) {

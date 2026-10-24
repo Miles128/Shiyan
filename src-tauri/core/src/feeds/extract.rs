@@ -143,12 +143,7 @@ pub(crate) fn pick_body(extracted: String, full_page: String) -> String {
     }
 }
 
-/// Fetch a public article URL and extract title + main text (no paywall bypass).
-pub(crate) fn extract_article_page(client: &Client, url: &str) -> Result<ExtractedPage, AppError> {
-    extract_page(client, url).map_err(Into::into)
-}
-
 /// Fetch a public article URL and extract main text (no paywall bypass).
 pub(crate) fn fetch_article_page(client: &Client, url: &str) -> Result<String, AppError> {
-    Ok(extract_article_page(client, url)?.text)
+    extract_page(client, url).map(|page| page.text).map_err(Into::into)
 }

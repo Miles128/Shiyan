@@ -596,12 +596,6 @@ fn body_replacement_invalidates_paragraph_translations() {
         .unwrap()
         .is_some());
 
-    // Repair path invalidates as well.
-    db::set_article_body(&conn, "inv1", &"repaired ".repeat(60), 120, "page").unwrap();
-    assert!(db::get_translation(&conn, "inv1", "paragraph", "0")
-        .unwrap()
-        .is_none());
-
 }
 
 #[test]
@@ -1476,44 +1470,6 @@ fn read_state_reading_and_unfinished_filters() {
         ids(db::ReadState::Read),
         vec!["in-progress".to_string()]
     );
-
-}
-
-#[test]
-fn repair_target_selection_and_body_replacement() {
-    let tmp = TmpDb::new("repair");
-    let conn = tmp.conn();
-
-    // Target: RSS article whose body lost all paragraph breaks.
-    let mut flat = sample_article("flat");
-    flat.content_text = "one long line without any newlines ".repeat(30);
-    // Not a target: body already has paragraph breaks.
-    let mut healthy = sample_article("healthy");
-    healthy.content_text = "First paragraph.\n\nSecond paragraph.".into();
-    // Not a target: book chapter (origin != rss), even with a flat body.
-    let mut imported = sample_article("imported");
-    imported.origin = "book".into();
-    imported.content_text = "another flat body ".repeat(30);
-
-    for a in [&flat, &healthy, &imported] {
-        db::insert_article_if_new(&conn, a).unwrap();
-    }
-
-    let targets = db::articles_without_paragraphs(&conn, 50).unwrap();
-    assert_eq!(targets.len(), 1, "only the flat RSS body is a repair target");
-    assert_eq!(targets[0].id, "flat");
-
-    // Replace the body as the repair path would.
-    let fixed = "First para.\n\nSecond para.\n\nThird para.";
-    db::set_article_body(&conn, "flat", fixed, 6, "page").unwrap();
-    let stored = db::get_article(&conn, "flat").unwrap().expect("exists");
-    assert_eq!(stored.content_text, fixed);
-    assert_eq!(stored.word_count, 6);
-    assert_eq!(stored.quality, "fulltext");
-    assert_eq!(stored.extraction_source, "page");
-
-    // Repaired rows leave the candidate set.
-    assert!(db::articles_without_paragraphs(&conn, 50).unwrap().is_empty());
 
 }
 

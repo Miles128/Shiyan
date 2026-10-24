@@ -271,15 +271,3 @@ pub async fn fill_missing_card_zh(app: AppHandle) -> Result<usize, AppError> {
     })
     .await
 }
-
-/// Re-fetch articles whose stored body lost paragraph breaks.
-#[tauri::command]
-pub async fn repair_paragraphs(
-    app: AppHandle,
-    limit: Option<usize>,
-) -> Result<usize, AppError> {
-    crate::commands::spawn_db(app, move |state| {
-        feeds::repair_missing_paragraphs(state, limit.unwrap_or(30))
-    })
-    .await
-}

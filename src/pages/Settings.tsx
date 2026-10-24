@@ -60,8 +60,6 @@ export default function Settings() {
     toast.err(message),
   );
   const [tab, setTab] = useState<Tab>("reading");
-  const [repairing, setRepairing] = useState(false);
-  const [repairMsg, setRepairMsg] = useState<string | null>(null);
   const [backingUp, setBackingUp] = useState(false);
   const [restoring, setRestoring] = useState(false);
   // 5B: 刷新进行中禁用备份（后端同样拒绝，双保险）。
@@ -108,19 +106,6 @@ export default function Settings() {
       if (!String(e).includes("未选择备份文件")) toast.err(String(e));
     } finally {
       setRestoring(false);
-    }
-  }
-
-  async function repairParagraphs() {
-    setRepairing(true);
-    setRepairMsg(null);
-    try {
-      const n = await api.repairParagraphs(30);
-      setRepairMsg(n > 0 ? `已重抓修复 ${n} 篇的段落。` : "没有需要修复的文章。");
-    } catch (e) {
-      setRepairMsg(String(e));
-    } finally {
-      setRepairing(false);
     }
   }
 
@@ -200,21 +185,6 @@ export default function Settings() {
               永久保留）。你收藏的文章和手动导入的文件/链接不会被清理。默认 14 天。
             </p>
           </section>
-
-          <details className="settings-section">
-            <summary>维护（低频运维）</summary>
-            <p className="muted">
-              重新抓取「正文丢失段落换行」的文章并替换正文（每次最多 30 篇）。
-            </p>
-            <button
-              className="btn"
-              onClick={() => void repairParagraphs()}
-              disabled={repairing}
-            >
-              {repairing ? "修复中…" : "重抓修复段落"}
-            </button>
-            {repairMsg && <p className="banner ok">{repairMsg}</p>}
-          </details>
         </>
       )}
 

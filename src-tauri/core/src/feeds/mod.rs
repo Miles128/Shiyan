@@ -25,9 +25,7 @@ pub mod pipeline;
 // (`super::filters::x`), so nothing else is re-exported here — that is what
 // used to need a pile of `#[allow(unused_imports)]`. Items consumed by the
 // command shell live in another crate now, so their re-exports are `pub`.
-pub use cleanup::{
-    clear_stale_paragraph_translations_once, purge_blocked_articles, repair_missing_paragraphs,
-};
+pub use cleanup::{clear_stale_paragraph_translations_once, run_startup_cleanup_once};
 pub use enrich::{fill_missing_card_zh, CARDS_PER_REFRESH};
 #[cfg(test)]
 pub(crate) use filters::is_english_article;

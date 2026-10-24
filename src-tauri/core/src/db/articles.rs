@@ -887,37 +887,6 @@ pub fn book_chapter_position(
     }))
 }
 
-/// RSS articles whose stored body has no paragraph breaks (extraction loss),
-/// newest first — candidates for a re-fetch repair.
-pub fn articles_without_paragraphs(
-    conn: &Connection,
-    limit: usize,
-) -> Result<Vec<Article>, AppError> {
-    recent_articles_where(
-        conn,
-        "origin='rss' AND url LIKE 'http%' AND instr(content_text, char(10)) = 0",
-        limit,
-    )
-}
-
-/// Replace an article body after a successful re-extraction.
-pub fn set_article_body(
-    conn: &Connection,
-    id: &str,
-    content_text: &str,
-    word_count: i64,
-    extraction_source: &str,
-) -> Result<(), AppError> {
-    conn.execute(
-        "UPDATE articles SET content_text=?1, word_count=?2, quality='fulltext', extraction_source=?3 WHERE id=?4",
-        params![content_text, word_count, extraction_source, id],
-    )?;
-    // Same index-key invalidation as `refresh_article_content`: the repaired
-    // body re-splits into different paragraphs.
-    super::delete_paragraph_translations(conn, id)?;
-    Ok(())
-}
-
 pub fn set_article_summary_zh(conn: &Connection, id: &str, summary_zh: &str) -> Result<(), AppError> {
     conn.execute(
         "UPDATE articles SET summary_zh=?1 WHERE id=?2",

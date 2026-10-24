@@ -90,9 +90,6 @@ export const apiArticles = {
   getLearningStats: () => typedInvoke("get_learning_stats"),
   getReadingStats: () => typedInvoke("get_reading_stats"),
   fillMissingCardZh: () => typedInvoke("fill_missing_card_zh"),
-  /** Re-fetch articles whose stored body lost paragraph breaks. */
-  repairParagraphs: (limit?: number) =>
-    typedInvoke("repair_paragraphs", { limit: limit ?? null }),
   translateParagraph: (articleId: string, paragraphIndex: number, text: string) =>
     typedInvoke("translate_paragraph", {
       articleId,

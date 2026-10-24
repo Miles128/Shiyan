@@ -70,7 +70,6 @@ export interface Commands {
   get_learning_stats: { args: void; ret: LearningStats };
   get_reading_stats: { args: void; ret: ReadingStats };
   fill_missing_card_zh: { args: void; ret: number };
-  repair_paragraphs: { args: { limit: number | null }; ret: number };
   translate_paragraph: {
     args: { articleId: string; paragraphIndex: number; text: string };
     ret: TranslationRow;

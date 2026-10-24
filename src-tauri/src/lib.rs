@@ -19,11 +19,10 @@ pub fn run() {
             db::apply_pending_restore(&dir)?;
             let state = db::DbState::open(db::db_path(dir))?;
             {
-                // Drop empty articles, stamp never-measured word counts, and
-                // remove link roundups / podcast transcripts already stored.
+                // One-time library pass: drop empty articles, stamp never-measured
+                // word counts, and remove link roundups / podcast transcripts.
                 let conn = state.lock_write()?;
-                let _ = db::backfill_word_counts(&conn);
-                let _ = feeds::purge_blocked_articles(&conn);
+                let _ = feeds::run_startup_cleanup_once(&conn);
                 let _ = feeds::clear_stale_paragraph_translations_once(&conn);
             }
             app.manage(state);
@@ -58,7 +57,6 @@ pub fn run() {
             commands::books::search_books,
             commands::books::import_book,
             commands::articles::fill_missing_card_zh,
-            commands::articles::repair_paragraphs,
             commands::articles::translate_paragraph,
             commands::articles::translate_selection,
             commands::articles::translate_plain_text,
