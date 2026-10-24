@@ -974,6 +974,64 @@ fn pre_collapse_database_is_normalized() {
 }
 
 #[test]
+fn legacy_dead_columns_and_tables_are_dropped() {
+    let tmp = TmpDb::new("legacy-drop");
+    let conn = rusqlite::Connection::open(tmp.file()).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE articles (
+            id TEXT PRIMARY KEY,
+            tags_json TEXT NOT NULL DEFAULT '',
+            quality TEXT NOT NULL DEFAULT '',
+            extraction_source TEXT NOT NULL DEFAULT ''
+         );
+         CREATE INDEX idx_articles_origin_quality ON articles(quality);
+         CREATE TABLE feed_sources (
+            id TEXT PRIMARY KEY,
+            fail_count INTEGER NOT NULL DEFAULT 0,
+            last_fetched_at TEXT
+         );
+         CREATE TABLE book_catalog (
+            gid INTEGER PRIMARY KEY,
+            subjects TEXT NOT NULL DEFAULT ''
+         );
+         CREATE TABLE known_words (term TEXT PRIMARY KEY);
+         CREATE TABLE lookup_history (term TEXT);
+         PRAGMA user_version = 2;",
+    )
+    .unwrap();
+
+    db::migrate(&conn).unwrap();
+
+    for (table, column) in [
+        ("articles", "tags_json"),
+        ("articles", "quality"),
+        ("articles", "extraction_source"),
+        ("feed_sources", "fail_count"),
+        ("feed_sources", "last_fetched_at"),
+        ("book_catalog", "subjects"),
+    ] {
+        let n: i64 = conn
+            .query_row(
+                &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name=?1"),
+                [column],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 0, "{table}.{column} must be dropped");
+    }
+    for table in ["known_words", "lookup_history", "removed_feeds"] {
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                [table],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 0, "{table} must be dropped");
+    }
+}
+
+#[test]
 fn prune_stale_feeds_disables_and_keeps_articles() {
     let tmp = TmpDb::new("prune-stale");
     let conn = tmp.conn();
