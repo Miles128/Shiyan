@@ -123,21 +123,14 @@ pub fn delete_memory(conn: &Connection, id: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Escape one CSV field: wrap in quotes when it contains a comma, quote,
-/// or line break; double embedded quotes (RFC 4180). Prefix a single quote
-/// for fields starting with `=`, `+`, `-`, or `@` to prevent CSV formula
-/// injection when opened in spreadsheet applications.
-fn csv_field(s: &str) -> String {
-    let s = if s.starts_with('=') || s.starts_with('+') || s.starts_with('-') || s.starts_with('@')
-    {
+/// Neutralize CSV formula injection: prefix a single quote for fields
+/// starting with `=`, `+`, `-`, or `@`. Field quoting itself is RFC 4180
+/// and delegated to the `csv` crate.
+fn csv_guard(s: &str) -> String {
+    if s.starts_with(['=', '+', '-', '@']) {
         format!("'{s}")
     } else {
         s.to_string()
-    };
-    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
-        format!("\"{}\"", s.replace('"', "\"\""))
-    } else {
-        s
     }
 }
 
@@ -146,11 +139,25 @@ fn csv_field(s: &str) -> String {
 /// columns are Anki-import friendly (term first, meaning second).
 pub fn export_memory_csv(conn: &Connection) -> Result<String, AppError> {
     let items = list_memory(conn, None, None)?;
-    let mut out =
-        String::from("\u{FEFF}term,kind,status,definition_zh,word_type,collocations,context_sentence,created_at,next_review_at,reps,interval_days\n");
+    let mut wtr = csv::WriterBuilder::new()
+        .terminator(csv::Terminator::Any(b'\n'))
+        .from_writer(Vec::new());
+    wtr.write_record([
+        "term",
+        "kind",
+        "status",
+        "definition_zh",
+        "word_type",
+        "collocations",
+        "context_sentence",
+        "created_at",
+        "next_review_at",
+        "reps",
+        "interval_days",
+    ])
+    .map_err(|e| AppError::msg(e.to_string()))?;
     for it in items {
         let collocations = it.collocations.join("; ");
-        let next_review = it.next_review_at.as_str();
         let reps = it.reps.to_string();
         let interval = it.interval_days.to_string();
         let fields = [
@@ -162,18 +169,16 @@ pub fn export_memory_csv(conn: &Connection) -> Result<String, AppError> {
             collocations.as_str(),
             it.context_sentence.as_str(),
             it.created_at.as_str(),
-            next_review,
+            it.next_review_at.as_str(),
             reps.as_str(),
             interval.as_str(),
         ];
-        out.push_str(
-            &fields
-                .iter()
-                .map(|f| csv_field(f))
-                .collect::<Vec<_>>()
-                .join(","),
-        );
-        out.push('\n');
+        wtr.write_record(fields.iter().map(|f| csv_guard(f)))
+            .map_err(|e| AppError::msg(e.to_string()))?;
     }
-    Ok(out)
+    let body = wtr
+        .into_inner()
+        .map_err(|e| AppError::msg(e.to_string()))?;
+    let body = String::from_utf8(body).map_err(|e| AppError::msg(e.to_string()))?;
+    Ok(format!("\u{FEFF}{body}"))
 }
