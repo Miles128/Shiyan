@@ -1,0 +1,307 @@
+/* 主界面：去掉顶部内边距，分类栏在静止态也贴死顶栏。
+   文章栏左右间距减半（--page-pad-x 供贴边工具栏对齐复用）。 */
+.page.home-page {
+  padding-top: 0;
+  --page-pad-x: clamp(8px, 1.75vw, 32px);
+  padding-inline: var(--page-pad-x);
+}
+
+/* Right-aligned cluster in the list heading row: insight text + inline toggles. */
+.tabs-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.learning-insight-inline {
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.4;
+  text-align: right;
+}
+
+.icon-btn.spin svg {
+  animation: topbar-spin 0.9s linear infinite;
+}
+
+/* Borderless text button (继续阅读 / 标签). */
+.linklike {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 0;
+  cursor: pointer;
+}
+
+.linklike:hover {
+  text-decoration: underline;
+}
+
+.linklike.active {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: none;
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.stat-value {
+  font-size: 1.35rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.stat-label {
+  font-size: 10pt;
+  color: var(--muted);
+}
+
+.day-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 140px;
+  padding: 4px 0 0;
+}
+
+.day-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+}
+
+.day-bar-track {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  overflow: hidden;
+}
+
+.day-bar {
+  width: 100%;
+  min-height: 2px;
+  background: var(--accent);
+  border-radius: 6px 6px 0 0;
+}
+
+.day-label {
+  font-size: 10pt;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.source-stats {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.source-stat-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.88rem;
+}
+
+.source-stat-track {
+  margin-top: 4px;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  overflow: hidden;
+}
+
+.source-stat-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: inherit;
+}
+
+.library-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+/* Wrapping filter rows (Home filter bar, reader type panel, ManageFeeds). */
+.filter-row,
+.feeds-cat-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.filter-group,
+.type-panel-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.filter-select {
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  font-size: 10pt;
+  padding: 5px 8px;
+  border-radius: 999px;
+  max-width: 240px;
+}
+
+.article-row-source {
+  margin: 2px 0 0;
+  font-size: 10pt;
+}
+
+.library-list {
+  margin-top: 0;
+}
+
+/* Single clear entry: pushed to the right end of the view row. */
+.filter-clear {
+  margin-left: auto;
+}
+
+.tag-chip {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-size: 10pt;
+  line-height: 1;
+  padding: 5px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.tag-chip.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.tag-chip.clear {
+  color: var(--danger);
+  border-color: transparent;
+}
+
+.tab {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  padding: 8px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.tab.active {
+  background: var(--panel);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.banner {
+  padding: 10px 12px;
+  border-radius: 10px;
+  margin: 0 0 14px;
+}
+
+.banner.ok {
+  background: var(--accent-soft);
+}
+
+.banner.err {
+  background: #f8e4e4;
+  color: var(--danger);
+}
+
+:root[data-theme="dark"] .banner.err {
+  background: #3a2323;
+}
+
+.banner.with-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 16px 28px 0;
+}
+
+/* Shared list reset: articles and library entries are separated by a rule. */
+.article-list,
+.vocab-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* Articles are separated by a thin rule, not boxed cards. */
+.article-list > li + li {
+  border-top: 1px solid var(--line);
+}
+
+.article-row {
+  display: block;
+  padding: 14px 2px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  color: inherit;
+  box-shadow: none;
+}
+
+.article-row.is-read {
+  opacity: 0.55;
+}
+
+.article-row h2 {
+  margin: 8px 0;
+  font-size: 1.2rem;
+}
+
+.article-title-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 4px;
+}
+
+.article-title-line .article-title-en {
+  margin: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+}

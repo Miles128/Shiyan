@@ -1,0 +1,217 @@
+/* Contextual topbar cluster (Home-only: refresh / filter / search). Globals
+   below never move; the cluster vanishes on other routes. */
+.topbar-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--line);
+  margin-inline: 6px;
+  flex-shrink: 0;
+}
+
+/* Top-bar inline search, seated next to the refresh button. */
+.home-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 2px;
+}
+
+.search-input {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 0.84rem;
+  font-family: inherit;
+  width: min(260px, 34vw);
+  outline: none;
+}
+
+.search-input:focus {
+  border-color: var(--accent);
+}
+
+/* 常驻细条: one slim action strip, no title bar, content-first.
+   macOS Overlay titlebar keeps traffic lights floating — reserve their space. */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 14px 6px 80px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bar-bg);
+  backdrop-filter: blur(8px);
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  /* 锁死高度：下方各吸顶行栏 top 由 --bar-h 派生（藏 1px 在顶栏下），接缝恒成立。 */
+  height: var(--bar-h);
+}
+
+/* With a sidebar, the traffic lights sit over the sidebar, so the top bar no
+   longer needs its 80px left inset. */
+.app-shell.with-sidebar .topbar {
+  padding-left: 14px;
+}
+
+/* Reader: the title row draws the only line. Drop the top bar's rule and
+   frost so the two strips don't read as two bars. */
+.app-shell:has(.page.reader) .topbar {
+  border-bottom-color: transparent;
+  background: var(--bg);
+  backdrop-filter: none;
+}
+
+.topbar-nav,
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.brand-mini {
+  font-size: 10pt;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-right: 6px;
+  text-decoration: none;
+}
+
+a.brand-mini:hover {
+  color: var(--ink);
+}
+
+.topbar-link {
+  color: var(--muted);
+  font-size: 10pt;
+  padding: 4px 10px;
+  border-radius: 8px;
+}
+
+.topbar-link.active {
+  color: var(--ink);
+  background: var(--accent-soft);
+}
+
+/* Shared borderless icon-button recipe (topbar / reader);
+   per-family rules below only override padding. */
+.topbar-btn,
+.icon-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.topbar-btn {
+  padding: 6px 8px;
+  text-decoration: none;
+}
+
+.topbar-btn svg,
+.icon-btn svg {
+  display: block;
+}
+
+@keyframes topbar-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Shared hover/focus fill for borderless icon buttons and chips. */
+.topbar-btn:hover,
+.topbar-btn.active,
+.topbar-link:hover,
+.icon-btn:hover,
+.tag-chip:hover {
+  color: var(--ink);
+  background: var(--accent-soft);
+}
+
+.topbar-btn.spin svg {
+  animation: topbar-spin 0.9s linear infinite;
+}
+
+.topbar-btn:disabled,
+.icon-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Reader 文章操作图标按钮（返回/收藏/朗读/翻译），与 topbar-btn 同风格。 */
+.icon-btn {
+  padding: 7px;
+}
+
+.icon-btn[aria-pressed="true"] {
+  color: var(--accent);
+}
+
+.main {
+  min-width: 0;
+  flex: 1;
+}
+
+/* Sub-pages: back to the main interface, top-right but not in the top bar. */
+.app-shell.refreshing .main {
+  padding-bottom: 64px;
+}
+
+.page {
+  /* Fluid: the content column follows the window width. */
+  padding: 14px clamp(16px, 3.5vw, 64px) 44px;
+  max-width: none;
+  width: 100%;
+}
+
+.page.reader {
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+  padding-top: 0;
+  padding-inline: clamp(0.75rem, 2vw, 1.25rem);
+  box-sizing: border-box;
+  --reader-font: "Iowan Old Style", "Palatino Linotype", Palatino, "LXGW WenKai",
+    serif;
+  --reader-size: 18px;
+  --reader-lh: 1.75;
+  --reader-measure: 100%;
+}
+
+.page.reader.reader-full {
+  max-width: none;
+}
+
+.page.reader h1 {
+  margin: 4px 0 0;
+  font-size: 10pt;
+  letter-spacing: 0.01em;
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+
+.page-header-slim {
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.reader-heading {
+  margin-bottom: 22px;
+}

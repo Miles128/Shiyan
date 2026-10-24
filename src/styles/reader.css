@@ -1,0 +1,141 @@
+/* 标题栏即顶栏：全宽贴死视口顶部（紧贴全局 .topbar）与两侧，
+   不再是内容区里的悬浮圆角条。负边距抵消 .page.reader 的两侧内边距，
+   内边距补回相同宽度，文字仍与正文对齐。
+   top 取 39px 而非 40px：藏 1px 在顶栏之下，吞掉亚像素接缝。 */
+.reader-title-row {
+  position: sticky;
+  top: calc(var(--bar-h) - 1px);
+  z-index: 30;
+  background: var(--bg);
+  margin-inline: calc(clamp(0.75rem, 2vw, 1.25rem) * -1);
+  padding: 8px clamp(0.75rem, 2vw, 1.25rem) 6px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+/* 标题栏是 article-body 的首个子元素：父元素 margin-top 会在静止态
+   顶出一道缝，归零让标题栏在未滚动时也贴死顶栏。 */
+.page.reader .article-body {
+  margin-top: 0;
+}
+
+.page.reader .reader-title-row h1 {
+  flex: 1;
+  /* Body text + 2pt, beating the lower-specificity .page.reader h1 rule. */
+  font-size: calc(var(--reader-size, 18px) + 2pt);
+  line-height: 1.3;
+  margin: 0;
+}
+
+.reader-title-row .page-header-actions {
+  flex-shrink: 0;
+  padding-top: 3px;
+}
+
+/* 读完提示：底部中央淡入、停留、慢慢淡出；穿透点击不挡正文操作。 */
+.read-done {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 32px;
+  width: fit-content;
+  margin-inline: auto;
+  z-index: 60;
+  pointer-events: none;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-indent: 0.2em;
+  padding: 8px 18px;
+  animation: read-done-fade 2.8s ease forwards;
+}
+
+@keyframes read-done-fade {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  12% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  72% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .read-done {
+    animation-duration: 0.01s;
+  }
+}
+
+.page h1 {
+  margin: 0 0 6px;
+  font-size: 1.85rem;
+  line-height: 1.2;
+}
+
+.muted {
+  color: var(--muted);
+  margin: 0;
+}
+
+.btn {
+  border: none;
+  background: var(--panel);
+  color: var(--ink);
+  padding: 9px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+
+.btn:hover,
+.btn:focus-visible {
+  background: var(--accent-soft);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.btn.primary {
+  background: var(--accent);
+  color: #f7fffc;
+}
+
+.btn.primary:hover,
+.btn.primary:focus-visible {
+  background: var(--accent);
+  filter: brightness(0.94);
+}
+
+.btn.small {
+  padding: 6px 10px;
+  font-size: 0.92rem;
+  box-shadow: none;
+}
+
+.btn.danger {
+  color: var(--danger);
+}
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}

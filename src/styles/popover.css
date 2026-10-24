@@ -1,0 +1,83 @@
+/* 弹窗头部：词条信息 + 右上角无痕图标按钮（朗读/关闭） */
+.pop-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pop-icons {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  margin: -2px -2px 0 0;
+}
+
+.pop-icon-btn {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.pop-icon-btn:hover,
+.pop-icon-btn:focus-visible,
+.vocab-icon-btn:hover {
+  color: var(--ink);
+  background: var(--accent-soft);
+}
+
+.pop-icon-btn.active {
+  color: var(--accent);
+}
+
+/* 弹窗底部操作行：无痕文字按钮，无边框无底色，hover 才出现背景 */
+.pop-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-top: 10px;
+}
+
+.pop-link {
+  border: none;
+  background: transparent;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.pop-link:hover,
+.pop-link:focus-visible {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.pop-link.primary {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.err-inline {
+  color: var(--danger);
+  margin-bottom: 8px;
+  font-size: 0.9rem;
+}
+
+.search {
+  width: 100%;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}

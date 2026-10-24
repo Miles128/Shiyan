@@ -1,0 +1,113 @@
+:root {
+  color-scheme: light;
+  --bg: #f6f3ee;
+  --panel: #fffdf9;
+  --ink: #1c1a17;
+  --muted: #6f6a63;
+  --line: #e4ddd3;
+  --accent: #0f5c4c;
+  --accent-soft: #d8efe8;
+  --danger: #9b2c2c;
+  --shadow: 0 10px 30px rgba(28, 26, 23, 0.06);
+  --bar-bg: rgba(255, 253, 249, 0.72);
+  --panel-strong: rgba(255, 253, 249, 0.94);
+  --scrim: rgba(255, 253, 249, 0.6);
+  --card: #fff;
+  --hover-fill: #fff;
+  --glow-a: #efe7d8;
+  --glow-b: #eae0d3;
+  --progress-a: #0f5c4c;
+  --progress-b: #1a7a66;
+  /* 顶栏锁死高度：下方各吸顶行栏 top 由此变量派生，改一处即同步。 */
+  --bar-h: 40px;
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "LXGW WenKai",
+    serif;
+}
+
+/* Explicit theme: index.html sets data-theme pre-paint from the system
+   scheme; src/theme.ts overwrites it once the user preference loads. */
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #16181a;
+    --panel: #1f2226;
+    --ink: #e9e6e0;
+    --muted: #9aa1a8;
+    --line: #2f353b;
+    --accent: #6fbfa8;
+    --accent-soft: #22352f;
+    --danger: #e08a8a;
+    --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    --bar-bg: rgba(22, 24, 26, 0.72);
+    --panel-strong: rgba(22, 24, 26, 0.94);
+    --scrim: rgba(255, 255, 255, 0.04);
+    --card: #1f2226;
+    --hover-fill: #24282d;
+    --glow-a: rgba(120, 100, 70, 0.16);
+    --glow-b: rgba(140, 108, 74, 0.14);
+    --progress-a: #2f8f77;
+    --progress-b: #45ab90;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  color: var(--ink);
+}
+
+html {
+  background: var(--bg);
+}
+
+/* Page backdrop: one fixed layer, painted once. It used to live on
+   html+body+#root (three stacked copies) and the `background` shorthand's
+   default repeat tiled the glow again on every viewport height of scrolling. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      1200px 600px at 10% -10%,
+      var(--glow-a) 0%,
+      transparent 55%
+    )
+    no-repeat,
+    radial-gradient(900px 500px at 100% 0%, var(--glow-b) 0%, transparent 50%)
+    no-repeat,
+    var(--bg);
+}
+
+button,
+input {
+  font: inherit;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  min-height: 100%;
+  position: relative;
+}
+
+/* The right-hand column is what actually grows with content, so the sticky
+   top bar and the sticky sub-rows keep working against the document scroll. */
+.app-col {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}

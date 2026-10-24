@@ -1,0 +1,388 @@
+/* Single-row toolbar for the vocab library: tabs + search on one line. */
+.vocab-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.vocab-toolbar .tabs {
+  margin-bottom: 0;
+}
+
+.vocab-toolbar-search {
+  flex: 1;
+  min-width: 160px;
+  width: auto;
+  margin-bottom: 0;
+}
+
+/* One word per row: term — 中文意思. */
+.vocab-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 9px 2px;
+}
+
+.vocab-term {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vocab-term:hover {
+  color: var(--accent);
+}
+
+.vocab-zh {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.vocab-row-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.vocab-icon-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  padding: 0;
+}
+
+.vocab-icon-btn.danger:hover {
+  color: var(--danger);
+}
+
+.linklike.danger {
+  color: var(--danger);
+}
+
+.vocab-list > li + li {
+  border-top: 1px solid var(--line);
+}
+
+.context {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.row-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.settings-section {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0 0 20px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+  box-shadow: none;
+}
+
+.settings-section h2 {
+  margin: 0 0 14px;
+  font-size: 1.15rem;
+}
+
+.settings-group-label {
+  margin: 4px 0 12px;
+  font-weight: 700;
+}
+
+details.settings-section > summary {
+  cursor: pointer;
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin-bottom: 14px;
+}
+
+.settings-section label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.settings-section input[type="text"],
+.settings-section input:not([type]),
+.settings-section input[type="password"] {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--card);
+}
+
+.feed-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.empty {
+  padding: 28px;
+  border: none;
+  border-radius: 14px;
+  background: var(--scrim);
+}
+
+.refresh-progress {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  padding: 12px 20px 14px;
+  background: var(--panel-strong);
+  border-top: 1px solid var(--line);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 -8px 24px var(--shadow);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.refresh-progress.done {
+  opacity: 0.85;
+}
+
+.refresh-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+
+.refresh-progress-label {
+  font-size: 0.92rem;
+  color: var(--ink);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.refresh-progress-side {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.refresh-progress-articles {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.refresh-progress-pct {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.refresh-progress-track {
+  height: 6px;
+  border-radius: 999px;
+  background: #e8e1d6;
+  overflow: hidden;
+}
+
+.refresh-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--progress-a) 0%, var(--progress-b) 100%);
+  transition: width 0.28s ease;
+}
+
+.page-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.feeds-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.feeds-paste {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.feeds-paste input {
+  flex: 1 1 140px;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--card);
+}
+
+.feeds-drawer-section h3 {
+  margin: 0 0 10px;
+  font-size: 1.05rem;
+}
+
+.feeds-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.feeds-section-head h3 {
+  margin: 0;
+}
+
+.discover-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.discover-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.discover-desc {
+  margin: 4px 0;
+  font-size: 0.9rem;
+}
+
+.inline-status {
+  display: inline-block;
+  margin: 4px 0 0;
+  padding: 2px 8px;
+  font-size: 10pt;
+}
+
+.placement-page .placement-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+
+.placement-quiz {
+  margin-top: 12px;
+  max-width: 36rem;
+}
+
+.placement-term {
+  font-size: 2rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  margin: 12px 0 20px;
+}
+
+.placement-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.placement-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  text-align: left;
+  width: 100%;
+  padding: 12px 14px;
+  white-space: normal;
+  line-height: 1.4;
+}
+
+.placement-opt-letter {
+  flex: 0 0 1.5rem;
+  font-weight: 650;
+  opacity: 0.7;
+}
+
+.placement-settings {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+@media (max-width: 800px) {
+  .topbar {
+    flex-wrap: wrap;
+    padding: 4px 10px;
+    height: auto;
+    min-height: 40px;
+    /* 窄窗顶栏换行后高度不定：改为随页滚走，吸顶行贴视口顶，避免盖住/留缝。 */
+    position: static;
+  }
+  /* 顶栏不吸顶时，各行栏直接贴视口顶。 */
+  .reader-title-row,
+  .page-header-slim,
+  .header-tabs,
+  .placement-page .page-header {
+    top: 0;
+  }
+  .page {
+    padding: 10px 16px 32px;
+  }
+  .page.reader {
+    padding-inline: clamp(0.5rem, 3vw, 1rem);
+  }
+  /* 主界面沿用减半间距，贴边栏与之对齐。 */
+  .page.home-page {
+    --page-pad-x: 8px;
+  }
+  /* 贴边栏跟随窄屏内边距，否则左右又会对不齐。 */
+  .reader-title-row {
+    margin-inline: calc(clamp(0.5rem, 3vw, 1rem) * -1);
+    padding-inline: clamp(0.5rem, 3vw, 1rem);
+  }
+  .refresh-progress {
+    padding: 10px 14px 12px;
+  }
+}

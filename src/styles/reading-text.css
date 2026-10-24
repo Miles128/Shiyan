@@ -1,0 +1,438 @@
+/* Approximate length, sitting just left of the difficulty badge. */
+.article-length {
+  flex: none;
+  font-size: 10pt;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+/* Difficulty index badge — right-aligned to the title. */
+.difficulty-badge {
+  flex: none;
+  font-size: 10pt;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  color: #fff;
+}
+
+.difficulty-badge.d-easy {
+  background: #3f8f5f;
+}
+
+.difficulty-badge.d-normal {
+  background: #7aa93c;
+}
+
+.difficulty-badge.d-hard {
+  background: #c9a227;
+}
+
+.difficulty-badge.d-harder {
+  background: #d07a2b;
+}
+
+.difficulty-badge.d-hardest {
+  background: #c0453b;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10pt;
+}
+
+.pill.inline {
+  margin-top: 8px;
+}
+
+.article-summary-zh {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.article-body {
+  margin-top: 8px;
+  width: 100%;
+}
+
+.para-block {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 8px;
+  margin: 0 0 18px;
+}
+
+.para-gutter {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+}
+
+.para-btn {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease, visibility 0.15s ease, color 0.15s ease, background 0.15s ease;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 10pt;
+  padding: 0;
+}
+
+.para-block:hover .para-btn,
+.para-gutter:hover .para-btn,
+.para-btn:focus,
+.para-btn:focus-visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+.para-btn:hover {
+  background: var(--accent-soft);
+  color: var(--ink);
+}
+
+.para-btn.active {
+  opacity: 1;
+  visibility: visible;
+  color: var(--accent);
+}
+
+.para-content p,
+.para-content .md-preview {
+  line-height: var(--reader-lh, 1.75);
+  font-size: var(--reader-size, 1.08rem);
+  font-family: var(--reader-font, inherit);
+  text-align: justify;
+  text-justify: inter-word;
+  hyphens: auto;
+  overflow-wrap: break-word;
+}
+
+.para-content p {
+  margin: 0;
+}
+
+.para-content .md-preview > :first-child {
+  margin-top: 0;
+}
+
+.para-content .md-preview > :last-child {
+  margin-bottom: 0;
+}
+
+.para-content .md-preview h1,
+.para-content .md-preview h2,
+.para-content .md-preview h3,
+.para-content .md-preview h4,
+.para-content .md-preview h5,
+.para-content .md-preview h6 {
+  margin: 0.4em 0 0.35em;
+  line-height: 1.35;
+  font-weight: 650;
+  text-align: left;
+  hyphens: none;
+}
+
+.para-content .md-preview p {
+  margin: 0.35em 0;
+  text-align: justify;
+  text-justify: inter-word;
+}
+
+.para-content .md-preview pre,
+.para-content .md-preview code {
+  text-align: left;
+  hyphens: none;
+}
+
+.para-content .md-preview ul,
+.para-content .md-preview ol {
+  margin: 0.35em 0;
+  padding-left: 1.35em;
+}
+
+.para-content .md-preview li {
+  margin: 0.15em 0;
+}
+
+.para-content .md-preview a {
+  color: var(--accent);
+}
+
+.para-content .md-preview code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.92em;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+
+.para-content .md-preview pre {
+  margin: 0.5em 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.para-content .md-preview pre code {
+  border: none;
+  background: transparent;
+  padding: 0;
+}
+
+.para-content .md-preview blockquote {
+  margin: 0.4em 0;
+  padding-left: 12px;
+  border-left: 3px solid var(--accent-soft);
+  color: var(--muted);
+}
+
+.para-content .zh {
+  margin-top: 8px;
+  color: var(--muted);
+  border-left: 2px solid var(--accent-soft);
+  padding-left: 12px;
+  line-height: var(--reader-lh, 1.7);
+  font-family: var(--reader-font, inherit);
+  text-align: justify;
+  text-justify: inter-ideograph;
+}
+
+mark.vocab-hit {
+  background: rgba(15, 92, 76, 0.14);
+  color: inherit;
+  border-radius: 3px;
+  box-decoration-break: clone;
+  cursor: pointer;
+}
+
+mark.vocab-hit:hover {
+  background: rgba(15, 92, 76, 0.26);
+}
+
+/* 普通词只给可点暗示，hover 不改背景：
+   justify + hyphens 下逐词背景重绘会让整行文字视觉抖动。 */
+.plain-word {
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.plain-word:focus-visible {
+  outline: 2px solid rgba(15, 92, 76, 0.35);
+  outline-offset: 2px;
+}
+
+.hard-word {
+  text-decoration: underline;
+  text-decoration-color: rgba(15, 92, 76, 0.55);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.hard-word:hover {
+  background: rgba(15, 92, 76, 0.08);
+}
+
+.hard-word:focus-visible {
+  background: rgba(15, 92, 76, 0.08);
+  outline: 2px solid rgba(15, 92, 76, 0.55);
+  outline-offset: 2px;
+}
+
+.hard-word.vocab-hit {
+  background: rgba(15, 92, 76, 0.14);
+}
+
+/* 词块（chunks.json）：结构分 4 类，靠下划线线型区分；hover / 点按沿用难词交互。
+   已知词块渲染为 plain（无下划线），学习中的沿用 vocab-hit 高亮。 */
+.chunk-word {
+  box-decoration-break: clone;
+}
+.chunk-word.hard-word {
+  text-decoration-thickness: 1.6px;
+  text-underline-offset: 4px;
+}
+.chunk-idiom.hard-word {
+  text-decoration-style: wavy;
+  text-decoration-color: rgba(180, 83, 9, 0.6);
+}
+.chunk-phrasal.hard-word {
+  text-decoration-style: solid;
+  text-decoration-color: rgba(15, 92, 76, 0.62);
+}
+.chunk-collocation.hard-word {
+  text-decoration-style: dotted;
+  text-decoration-color: rgba(56, 89, 175, 0.72);
+}
+.chunk-slang.hard-word {
+  text-decoration-style: double;
+  text-decoration-color: rgba(147, 51, 234, 0.55);
+}
+
+/* 中文释义挂在词/短语正下方：绝对定位只占行距留白，不撑行盒、不影响排版。
+   能放下的前提是行距够大 —— 开关打开时 readingCssVars 会把 --reader-lh 抬到下限。 */
+.gloss-wrap {
+  position: relative;
+  display: inline;
+}
+
+.word-gloss {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", sans-serif;
+  font-size: calc(0.55em + 2pt);
+  line-height: 1;
+  letter-spacing: 0;
+  color: var(--muted);
+  opacity: 0.72;
+  white-space: nowrap;
+  pointer-events: none;
+  font-variant-numeric: normal;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+
+.gloss-wrap:hover .word-gloss,
+.gloss-wrap:focus-within .word-gloss {
+  opacity: 1;
+  color: var(--ink);
+}
+
+.settings-section select {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.source-link {
+  margin-top: 28px;
+  word-break: break-all;
+  font-size: 0.9rem;
+}
+
+.selection-pop {
+  position: fixed;
+  z-index: 40;
+  min-width: 220px;
+  max-width: 320px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: none;
+  transform: translateX(-30%);
+}
+
+.pop-term {
+  font-weight: 700;
+  margin-bottom: 6px;
+  min-width: 0;
+}
+
+.pop-zh {
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.pop-phonetic {
+  margin-left: 8px;
+  font-size: 10pt;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.pop-pos {
+  margin-left: 8px;
+  font-size: 10pt;
+  color: var(--accent);
+  font-weight: 400;
+}
+
+.pop-senses {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.pop-senses li + li {
+  margin-top: 2px;
+}
+
+.pop-examples {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pop-example {
+  border-left: 2px solid var(--line);
+  padding-left: 8px;
+}
+
+.pop-ex-en {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.pop-ex-zh {
+  margin: 2px 0 0;
+  font-size: 10pt;
+  color: var(--muted);
+}
+
+.pop-origin {
+  margin-top: 8px;
+  font-size: 10pt;
+}
+
+.pop-more {
+  margin-top: 6px;
+  font-size: 0.85rem;
+}
+
+.pop-more > summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.pop-more > summary:hover {
+  color: var(--ink);
+}
+
+.pop-more .pop-senses {
+  margin-top: 4px;
+}
+
+.pop-more .pop-examples {
+  margin-top: 6px;
+}

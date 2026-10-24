@@ -1,0 +1,403 @@
+/* Home typography hierarchy: the article title is the baseline, and every
+   non-title text on the main interface is exactly 2pt smaller. */
+:root {
+  --home-title: 1.17rem;
+  --home-text: calc(var(--home-title) - 2pt);
+  --home-meta: calc(var(--home-text) - 2pt);
+}
+
+.article-title-line .article-title-en {
+  font-size: var(--home-title);
+}
+
+.article-summary-zh,
+.article-row-source,
+.learning-insight-inline,
+.linklike,
+.tag-chip,
+.filter-select {
+  font-size: var(--home-text);
+}
+
+/* Length + difficulty read as fine print: another 2pt smaller. */
+.article-length,
+.difficulty-badge {
+  font-size: var(--home-meta);
+}
+
+/* 左侧栏里的标签章：--home-text(12.04pt) ×1.1 → 13pt。 */
+.sidebar .tag-chip {
+  font-size: 13pt;
+}
+
+/* Global toast layer (ToastProvider): bottom-center, success auto-dismisses,
+   errors stay until closed. */
+.toast-stack {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  z-index: 60;
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 520px;
+  padding: 9px 14px;
+  border-radius: 10px;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  font-size: var(--home-text, 0.95rem);
+  color: var(--ink);
+  animation: toast-in 160ms ease-out;
+}
+
+.toast.err {
+  border-color: var(--danger);
+}
+
+.toast-close {
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+
+.toast-close:hover {
+  color: var(--ink);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Reader typography quick panel (Aa) — anchored under the sticky title row. */
+.type-toggle {
+  font-size: 10pt;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.type-toggle.active {
+  color: var(--accent);
+}
+
+.type-panel-anchor {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 45;
+}
+
+.type-panel {
+  width: min(340px, 88vw);
+  max-height: min(70vh, 480px);
+  overflow-y: auto;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.type-panel-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.type-panel-label {
+  font-size: var(--home-meta, 0.85rem);
+  color: var(--muted);
+}
+
+/* ManageFeeds: inline category add, collapsible add block. */
+.feeds-cat-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.feeds-cat-add input {
+  width: 9em;
+  padding: 4px 8px;
+}
+
+.feed-row-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.feed-row-item:last-child {
+  border-bottom: none;
+}
+
+.feed-enabled {
+  padding-top: 2px;
+}
+
+.feed-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.feed-row-title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.feed-desc {
+  font-size: var(--home-meta, 0.85rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 32em;
+}
+
+.feed-url {
+  font-size: var(--home-meta, 0.85rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.muted-pill {
+  color: var(--muted);
+  border-color: var(--line);
+}
+
+.feed-delete {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.feed-delete:hover {
+  color: var(--danger);
+}
+
+.feed-hint {
+  margin: 8px 0 0;
+  font-size: var(--home-meta, 0.85rem);
+}
+
+.feeds-add-block {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 14px;
+  background: var(--panel);
+}
+
+.feeds-add-block summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--ink);
+  user-select: none;
+}
+
+.feeds-add-block[open] summary {
+  margin-bottom: 10px;
+}
+
+.feeds-add-tabs {
+  margin-bottom: 10px;
+}
+
+/* Settings → 数据: backup/restore actions. */
+.data-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+/* Pages with a back button: lock the first row under the topbar while
+   scrolling (same sticky recipe as .reader-title-row). Settings folds its back
+   button into the tab row (.header-tabs); Vocab/Stats use .page-header-slim;
+   Placement phases use .page-header inside .placement-page. */
+.page-header-slim,
+.header-tabs,
+.placement-page .page-header {
+  position: sticky;
+  top: var(--bar-h);
+  z-index: 30;
+  background: var(--bar-bg);
+  backdrop-filter: blur(8px);
+}
+
+/* Settings: back button sits at the right end of the tab row. */
+.header-tabs .icon-btn {
+  margin-left: auto;
+}
+
+/* Keyboard navigation highlight (j/k on the home list). */
+.article-row.is-active {
+  background: var(--hover-fill);
+  outline: 1px solid var(--line);
+  border-radius: 10px;
+  /* Keep the row's left edge aligned with non-highlighted rows. */
+  margin-inline: -10px;
+  padding-inline: 12px;
+}
+
+/* ── 书籍导入（Project Gutenberg → 订阅源 + 章节文章） ───────────────── */
+
+.book-dialog-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: calc(var(--bar-h) + 32px) 16px 32px;
+  overflow-y: auto;
+  background: rgba(28, 26, 23, 0.28);
+}
+
+:root[data-theme="dark"] .book-dialog-scrim {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.book-dialog {
+  width: min(680px, 100%);
+  padding: 18px 20px 20px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.book-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.book-dialog-head h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.book-dialog-hint {
+  margin: 6px 0 14px;
+  font-size: 0.86rem;
+}
+
+.book-search-form {
+  margin-bottom: 10px;
+}
+
+.book-shelf-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.book-empty {
+  padding: 18px 0 6px;
+}
+
+.book-result-list {
+  max-height: 52vh;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.book-result-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.book-result-row:first-child {
+  border-top: none;
+}
+
+.book-result-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.book-result-main strong {
+  display: block;
+  font-size: 0.98rem;
+  font-weight: 600;
+}
+
+.book-result-main p {
+  margin: 2px 0 0;
+  font-size: 0.84rem;
+}
+
+/* ── 阅读页章节导航 ───────────────────────────────────────────────── */
+
+.chapter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 14px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  font-size: 0.88rem;
+}
+
+.chapter-bar-footer {
+  margin: 28px 0 10px;
+}
+
+.chapter-bar-title {
+  max-width: 44ch;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chapter-bar-count {
+  flex: 0 0 auto;
+}
+
+.chapter-bar-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
