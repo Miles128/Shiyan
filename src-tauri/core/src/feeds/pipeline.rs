@@ -1,10 +1,7 @@
 //! The RSS refresh pipeline: parallel feed download, entry filtering,
 //! DB insertion, and progress reporting.
 
-use super::cleanup::{
-    assess_unassessed_articles, audit_rss_bodies_once, purge_expired_articles,
-    purge_rss_below_word_threshold,
-};
+use super::cleanup::{purge_expired_articles, purge_rss_below_word_threshold};
 use super::dedup::{canonical_article_url, TitleIndex};
 use super::enrich::{fill_missing_card_zh, CARDS_PER_REFRESH};
 use super::extract::{fetch_article_page, html_to_text};
@@ -68,8 +65,6 @@ pub struct RefreshResult {
     pub skipped_short: usize,
     pub skipped_non_english: usize,
     pub skipped_duplicate: usize,
-    /// One-time backfill removals of synopsis-only / truncated bodies.
-    pub purged_teasers: usize,
     /// Retention removals (articles older than the configured window).
     pub purged_old: usize,
     /// Stale feeds retired this refresh (30-day rolling window, no new articles).
@@ -270,16 +265,10 @@ pub fn refresh_feeds(
         }
     };
 
-    // One-time assessment of rows that never got a quality stamp.
+    // Retention window from settings, plus the stored-body word bar.
     {
         let conn = db.lock_write()?;
-        let (del_non_english, del_short) = assess_unassessed_articles(&conn)?;
-        result.skipped_non_english += del_non_english;
-        result.skipped_short += del_short;
         result.skipped_short += purge_rss_below_word_threshold(&conn)?;
-        // One-time body audit: synopsis-only / truncated bodies out.
-        result.purged_teasers += audit_rss_bodies_once(&conn)?;
-        // Retention window from settings.
         result.purged_old += purge_expired_articles(&conn, cfg.article_retention_days)?;
     }
     let known_urls = std::sync::Mutex::new({
@@ -683,7 +672,6 @@ fn download_feed_articles(
                     published.map(|d| d.to_rfc3339()),
                     rss_text,
                     now.clone(),
-                    "rss",
                 ));
             } else {
                 stats.skipped_existing += 1;
@@ -742,7 +730,6 @@ fn download_feed_articles(
             published.map(|d| d.to_rfc3339()),
             content_text,
             now.clone(),
-            "page",
         ));
     }
     Ok(FeedDownload {
@@ -755,7 +742,7 @@ fn download_feed_articles(
 }
 
 /// Build an article whose body already passed the readability gate.
-/// Stamps word count + quality so refresh never re-derives them.
+/// Stamps the word count so refresh never re-derives it.
 #[allow(clippy::too_many_arguments)]
 fn fulltext_article(
     id: String,
@@ -766,7 +753,6 @@ fn fulltext_article(
     published_at: Option<String>,
     content_text: String,
     fetched_at: String,
-    extraction_source: &str,
 ) -> Article {
     let word_count = content_text.split_whitespace().count() as i64;
     Article {
@@ -783,8 +769,6 @@ fn fulltext_article(
         last_opened_at: None,
         open_count: 0,
         word_count,
-        quality: "fulltext".into(),
-        extraction_source: extraction_source.into(),
         dwell_ms: 0,
         read_completed: false,
         liked: false,

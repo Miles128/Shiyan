@@ -338,138 +338,14 @@ fn split_paragraphs_works() {
 }
 
 #[test]
-fn purge_summary_only_removes_teasers_keeps_fulltext() {
-    let tmp = TmpDb::new("purge-summary");
-    let conn = tmp.conn();
-
-    let mut chrome = String::from("Skip to main content\n\n");
-    for i in 1..40 {
-        chrome.push_str(&format!("* [ Home topic {i} ][{i}]\n"));
-    }
-    chrome.push_str("\nA one-line dek.\n");
-    let teaser = db::Article {
-        id: "teaser".into(),
-        url: "https://example.com/teaser".into(),
-        title: "Teaser".into(),
-        source: "T".into(),
-        category: "tech".into(),
-        published_at: None,
-        content_text: chrome,
-        fetched_at: "2020-01-01T00:00:00Z".into(),
-        origin: "rss".into(),
-        summary_zh: String::new(),
-        last_opened_at: None,
-        open_count: 0,
-        ..Default::default()
-    };
-    let full = db::Article {
-        id: "full".into(),
-        url: "https://example.com/full".into(),
-        title: "Full".into(),
-        source: "T".into(),
-        category: "tech".into(),
-        published_at: None,
-        content_text: "word ".repeat(500), // ≥ 2000 chars
-        fetched_at: "2020-01-01T00:00:00Z".into(),
-        origin: "rss".into(),
-        summary_zh: String::new(),
-        last_opened_at: None,
-        open_count: 0,
-        ..Default::default()
-    };
-    db::insert_article_if_new(&conn, &teaser).unwrap();
-    db::insert_article_if_new(&conn, &full).unwrap();
-
-    let removed = feeds::purge_summary_only_articles(&conn).unwrap();
-    assert_eq!(removed, 1);
-    assert!(db::get_article(&conn, "teaser").unwrap().is_none());
-    assert!(db::get_article(&conn, "full").unwrap().is_some());
-
-}
-
-#[test]
-fn purge_never_touches_book_chapters() {
-    let tmp = TmpDb::new("purge-import");
-    let conn = tmp.conn();
-
-    for (id, url, origin) in [
-        ("b1", "https://www.gutenberg.org/ebooks/1", "book"),
-        ("b2", "https://www.gutenberg.org/ebooks/2", "book"),
-    ] {
-        let a = db::Article {
-            id: id.into(),
-            url: url.into(),
-            title: "Imported".into(),
-                source: "导入".into(),
-            category: "other".into(),
-            published_at: None,
-            content_text: "a".repeat(500), // would be purged if origin were rss
-            fetched_at: "2020-01-01T00:00:00Z".into(),
-            origin: origin.into(),
-            summary_zh: String::new(),
-        last_opened_at: None,
-        open_count: 0,
-        ..Default::default()
-        };
-        db::insert_article_if_new(&conn, &a).unwrap();
-    }
-
-    let removed_short = feeds::purge_summary_only_articles(&conn).unwrap();
-    assert_eq!(removed_short, 0, "imported short bodies must survive");
-    let removed_lang = feeds::purge_non_english_articles(&conn).unwrap();
-    assert_eq!(removed_lang, 0, "imported articles must survive language purge");
-    assert_eq!(
-        list_articles(&conn, None, Some(100), Some(0))
-            .unwrap()
-            .len(),
-        2
-    );
-
-}
-
-#[test]
-fn collect_non_english_ids_does_not_delete() {
-    let tmp = TmpDb::new("collect-zh");
-    let conn = tmp.conn();
-    let zh = db::Article {
-        id: "zh1".into(),
-        url: "https://example.com/zh".into(),
-        title: "如何学习 Rust 编程语言入门指南".into(),
-        source: "T".into(),
-        category: "tech".into(),
-        published_at: None,
-        content_text: "今天我们来讨论如何高效学习一门新的编程语言。首先需要理解基本概念，然后通过大量练习巩固知识。"
-            .repeat(5),
-        fetched_at: "2020-01-01T00:00:00Z".into(),
-        origin: "rss".into(),
-        summary_zh: String::new(),
-        last_opened_at: None,
-        open_count: 0,
-        ..Default::default()
-    };
-    db::insert_article_if_new(&conn, &zh).unwrap();
-
-    let ids = feeds::collect_non_english_rss_ids(&conn).unwrap();
-    assert_eq!(ids, vec!["zh1".to_string()]);
-    assert!(db::get_article(&conn, "zh1").unwrap().is_some());
-
-    let removed = feeds::delete_articles(&conn, &ids).unwrap();
-    assert_eq!(removed, 1);
-    assert!(db::get_article(&conn, "zh1").unwrap().is_none());
-
-}
-
-#[test]
 fn purge_word_threshold_drops_short_rss_keeps_imports() {
     let tmp = TmpDb::new("word-threshold");
     let conn = tmp.conn();
 
     let mut short = sample_article("short");
     short.word_count = 100;
-    short.quality = "fulltext".into();
     let mut long = sample_article("long");
     long.word_count = 800;
-    long.quality = "fulltext".into();
     let mut unknown = sample_article("unknown");
     unknown.word_count = 0;
     let mut imported_short = sample_article("imported");
@@ -906,38 +782,6 @@ fn query_articles_search_matches_title_blurb_source_and_escapes_like() {
     assert_eq!(q("100%"), vec!["pct".to_string()]);
     // Empty / whitespace-only means no filter.
     assert_eq!(q("   ").len(), 3);
-
-}
-
-#[test]
-fn content_audit_removes_synopsis_only_bodies_once() {
-    let tmp = TmpDb::new("audit");
-    let conn = tmp.conn();
-
-    // A 500-char synopsis that ends with a read-more marker (teaser).
-    let mut teaser = sample_article("teaser");
-    teaser.content_text = format!("word {} Continue reading…", "word ".repeat(90));
-    teaser.word_count = 90;
-    // A real full-text article.
-    let mut full = sample_article("full");
-    full.content_text = "word ".repeat(600);
-    full.word_count = 600;
-
-    db::insert_article_if_new(&conn, &teaser).unwrap();
-    db::insert_article_if_new(&conn, &full).unwrap();
-
-    let removed = feeds::audit_rss_bodies_once(&conn).unwrap();
-    assert_eq!(removed, 1, "synopsis-only body should be purged");
-    assert!(db::get_article(&conn, "teaser").unwrap().is_none());
-    assert!(db::get_article(&conn, "full").unwrap().is_some());
-
-    // One-shot: a second run does nothing even if junk appears later.
-    let mut junk = sample_article("junk");
-    junk.content_text = "word ".repeat(10);
-    junk.word_count = 10;
-    db::insert_article_if_new(&conn, &junk).unwrap();
-    assert_eq!(feeds::audit_rss_bodies_once(&conn).unwrap(), 0);
-    assert!(db::get_article(&conn, "junk").unwrap().is_some());
 
 }
 
@@ -1687,7 +1531,7 @@ fn schema_adds_summary_zh_column() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(quality_col, 1, "articles.quality should exist after migrate");
+    assert_eq!(quality_col, 0, "articles.quality must be gone after migrate");
     let ratio_col: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM pragma_table_info('feed_sources') WHERE name='fulltext_ratio'",

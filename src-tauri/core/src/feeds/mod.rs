@@ -35,11 +35,7 @@ pub use pipeline::{refresh_feeds, request_refresh_cancel, RefreshProgress, Refre
 /// Reached only from tests (`feeds/tests.rs` via `use super::*`, plus
 /// `db_tests.rs` through `crate::feeds::`).
 #[cfg(test)]
-pub(crate) use cleanup::{
-    audit_rss_bodies_once, collect_non_english_rss_ids, delete_articles,
-    purge_expired_articles, purge_non_english_articles, purge_rss_below_word_threshold,
-    purge_summary_only_articles,
-};
+pub(crate) use cleanup::{purge_expired_articles, purge_rss_below_word_threshold};
 #[cfg(test)]
 pub(crate) use dedup::{canonical_article_url, is_near_duplicate_title, TitleIndex};
 #[cfg(test)]

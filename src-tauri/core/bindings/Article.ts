@@ -18,14 +18,6 @@ last_opened_at: string | null, open_count: number,
  */
 word_count: number, 
 /**
- * '' = not yet assessed; 'fulltext' once the body passed the readability gate.
- */
-quality: string, 
-/**
- * Where the final body came from: rss | page | url | file.
- */
-extraction_source: string, 
-/**
  * Accumulated visible reading time in milliseconds.
  */
 dwell_ms: number, read_completed: boolean, liked: boolean, };

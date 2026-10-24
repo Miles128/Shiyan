@@ -111,8 +111,6 @@ pub fn import_book(db: &DbState, gid: i64) -> Result<ImportedBook, AppError> {
                 last_opened_at: None,
                 open_count: 0,
                 word_count: chapter.words() as i64,
-                quality: "fulltext".into(),
-                extraction_source: "gutenberg".into(),
                 dwell_ms: 0,
                 read_completed: false,
                 liked: false,

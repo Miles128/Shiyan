@@ -2,10 +2,6 @@
 
 export type RefreshResult = { fetched_feeds: number, added_or_updated: number, updated: number, skipped_existing: number, skipped_short: number, skipped_non_english: number, skipped_duplicate: number, 
 /**
- * One-time backfill removals of synopsis-only / truncated bodies.
- */
-purged_teasers: number, 
-/**
  * Retention removals (articles older than the configured window).
  */
 purged_old: number, 

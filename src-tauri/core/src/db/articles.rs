@@ -5,7 +5,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 /// Full-row projection. The list projection is derived from this (see
 /// [`query_articles`]) so the column list cannot drift between the two.
 const ARTICLE_COLS: &str =
-    "id,url,title,source,category,published_at,content_text,fetched_at,origin,summary_zh,last_opened_at,open_count,word_count,quality,extraction_source,dwell_ms,read_completed,liked";
+    "id,url,title,source,category,published_at,content_text,fetched_at,origin,summary_zh,last_opened_at,open_count,word_count,dwell_ms,read_completed,liked";
 
 /// Home list only needs an excerpt (known% + blurb). Full body stays on get_article.
 pub const LIST_EXCERPT_CHARS: i32 = 6000;
@@ -452,8 +452,8 @@ pub fn article_counts_by_source(
 pub fn insert_article_if_new(conn: &Connection, a: &Article) -> Result<bool, AppError> {
     let changed = conn
         .execute(
-            "INSERT INTO articles (id,url,title,source,category,published_at,content_text,fetched_at,origin,summary_zh,word_count,quality,extraction_source)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
+            "INSERT INTO articles (id,url,title,source,category,published_at,content_text,fetched_at,origin,summary_zh,word_count)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
              ON CONFLICT(url) DO NOTHING",
             params![
                 a.id,
@@ -467,8 +467,6 @@ pub fn insert_article_if_new(conn: &Connection, a: &Article) -> Result<bool, App
                 a.origin,
                 a.summary_zh,
                 a.word_count,
-                a.quality,
-                a.extraction_source,
             ],
         )
         ?;
@@ -484,9 +482,9 @@ pub fn refresh_article_content(conn: &Connection, a: &Article) -> Result<bool, A
     let changed = conn
         .execute(
             "UPDATE articles SET title=?1, content_text=?2, fetched_at=?3, summary_zh='',
-                    word_count=?4, quality='fulltext', extraction_source=?5
-             WHERE url=?6 AND origin='rss' AND content_text <> ?2",
-            params![a.title, a.content_text, a.fetched_at, a.word_count, a.extraction_source, a.url],
+                    word_count=?4
+             WHERE url=?5 AND origin='rss' AND content_text <> ?2",
+            params![a.title, a.content_text, a.fetched_at, a.word_count, a.url],
         )
         ?;
     if changed > 0 {
@@ -504,38 +502,6 @@ pub fn refresh_article_content(conn: &Connection, a: &Article) -> Result<bool, A
         }
     }
     Ok(changed > 0)
-}
-
-/// RSS articles whose body quality has not been assessed yet (`quality=''`).
-/// Legacy rows get assessed once during refresh; new rows are stamped on insert.
-pub fn list_unassessed_rss_articles(conn: &Connection) -> Result<Vec<Article>, AppError> {
-    let mut stmt = conn
-        .prepare(&format!(
-            "SELECT {ARTICLE_COLS} FROM articles WHERE origin='rss' AND quality=''"
-        ))
-        ?;
-    let rows = stmt
-        .query_map([], row_as::<Article>)
-        ?
-        .collect::<Result<Vec<_>, _>>()
-        ?;
-    Ok(rows)
-}
-
-/// Stamp the body-quality verdict on an article (once; never re-derived later).
-pub fn set_article_quality(
-    conn: &Connection,
-    id: &str,
-    quality: &str,
-    extraction_source: &str,
-    word_count: i64,
-) -> Result<(), AppError> {
-    conn.execute(
-        "UPDATE articles SET quality=?1, extraction_source=?2, word_count=?3 WHERE id=?4",
-        params![quality, extraction_source, word_count, id],
-    )
-    ?;
-    Ok(())
 }
 
 /// Accumulate visible reading time and optionally mark the article as read to the end.
@@ -783,8 +749,8 @@ pub fn insert_book_chapter(
 ) -> Result<bool, AppError> {
     let changed = conn
         .execute(
-            "INSERT INTO articles (id,url,title,source,category,published_at,content_text,fetched_at,origin,summary_zh,word_count,quality,extraction_source,chapter_no)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
+            "INSERT INTO articles (id,url,title,source,category,published_at,content_text,fetched_at,origin,summary_zh,word_count,chapter_no)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
              ON CONFLICT(url) DO NOTHING",
             params![
                 a.id,
@@ -798,8 +764,6 @@ pub fn insert_book_chapter(
                 a.origin,
                 a.summary_zh,
                 a.word_count,
-                a.quality,
-                a.extraction_source,
                 chapter_no,
             ],
         )?;

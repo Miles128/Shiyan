@@ -97,12 +97,6 @@ pub struct Article {
     #[serde(default)]
     #[ts(type = "number")]
     pub word_count: i64,
-    /// '' = not yet assessed; 'fulltext' once the body passed the readability gate.
-    #[serde(default)]
-    pub quality: String,
-    /// Where the final body came from: rss | page | url | file.
-    #[serde(default)]
-    pub extraction_source: String,
     /// Accumulated visible reading time in milliseconds.
     #[serde(default)]
     #[ts(type = "number")]
@@ -590,8 +584,6 @@ CREATE TABLE IF NOT EXISTS articles (
     last_opened_at TEXT,
     open_count INTEGER NOT NULL DEFAULT 0,
     word_count INTEGER NOT NULL DEFAULT 0,
-    quality TEXT NOT NULL DEFAULT '',
-    extraction_source TEXT NOT NULL DEFAULT '',
     dwell_ms INTEGER NOT NULL DEFAULT 0,
     read_completed INTEGER NOT NULL DEFAULT 0,
     liked INTEGER NOT NULL DEFAULT 0,
@@ -645,19 +637,7 @@ CREATE TABLE IF NOT EXISTS memory_items (
     created_at TEXT NOT NULL,
     FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE SET NULL
 );
--- 已认识词功能已移除，表零引用，仅保留 schema 免迁移。
-CREATE TABLE IF NOT EXISTS known_words (
-    term TEXT PRIMARY KEY,
-    created_at TEXT NOT NULL
-);
--- 查词历史功能已移除，表与索引零引用，仅保留 schema 免迁移。
-CREATE TABLE IF NOT EXISTS lookup_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    term TEXT NOT NULL,
-    context TEXT NOT NULL DEFAULT '',
-    article_id TEXT,
-    created_at TEXT NOT NULL
-);
+-- 已认识词、查词历史与话题标签功能已移除；旧库的残留表由 v4 迁移删除。
 CREATE TABLE IF NOT EXISTS app_meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -675,20 +655,17 @@ CREATE TABLE IF NOT EXISTS book_catalog (
 );
 CREATE INDEX IF NOT EXISTS idx_articles_category ON articles(category);
 CREATE INDEX IF NOT EXISTS idx_articles_fetched ON articles(fetched_at DESC);
-CREATE INDEX IF NOT EXISTS idx_articles_origin_quality ON articles(origin, quality);
 CREATE INDEX IF NOT EXISTS idx_translations_article ON translations(article_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_kind_term ON memory_items(kind, lower(term));
 CREATE INDEX IF NOT EXISTS idx_memory_kind_status ON memory_items(kind, status);
 CREATE INDEX IF NOT EXISTS idx_memory_next ON memory_items(next_review_at);
 CREATE INDEX IF NOT EXISTS idx_memory_article ON memory_items(article_id);
-CREATE INDEX IF NOT EXISTS idx_lookup_created ON lookup_history(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_lookup_term ON lookup_history(lower(term));
 "#;
 
 /// Version-gated migrations. To add one: raise `LATEST_VERSION` and apply its
 /// DDL inside `migrate` when `stored < N`. Stamp each version with its own
 /// number (never `LATEST_VERSION`) so later steps are not skipped.
-pub(crate) const LATEST_VERSION: i64 = 3;
+pub(crate) const LATEST_VERSION: i64 = 4;
 
 /// The highest user_version any pre-collapse database can carry. Backup files
 /// written before the collapse (`.premigrate-v*.bak`) stamp up to 19; imports
@@ -762,6 +739,20 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), AppError> {
         }
         conn.pragma_update(None, "user_version", 3)?;
         stored = 3;
+    }
+
+    if stored < 4 {
+        // Retired features: body-quality stamps and lookup/known-word history.
+        // New ingest already gates bodies, so these columns carry no signal.
+        conn.execute("DROP INDEX IF EXISTS idx_articles_origin_quality", [])?;
+        drop_column_if_exists(conn, "articles", "quality")?;
+        drop_column_if_exists(conn, "articles", "extraction_source")?;
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS known_words;
+             DROP TABLE IF EXISTS lookup_history;",
+        )?;
+        conn.pragma_update(None, "user_version", 4)?;
+        stored = 4;
     }
 
     if stored < LATEST_VERSION {

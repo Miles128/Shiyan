@@ -344,7 +344,6 @@ export default function Home() {
         `新增 ${result.added_or_updated}` +
           (result.skipped_existing ? ` · 已有 ${result.skipped_existing}` : "") +
           (result.skipped_duplicate ? ` · 去重 ${result.skipped_duplicate}` : "") +
-          (result.purged_teasers ? ` · 清理残篇 ${result.purged_teasers}` : "") +
           (result.purged_old ? ` · 过期清理 ${result.purged_old}` : "") +
           (result.pruned_stale_feeds
             ? ` · 清退沉寂源 ${result.pruned_stale_feeds}`
