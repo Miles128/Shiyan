@@ -4,8 +4,11 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 const MEMORY_SELECT: &str = "SELECT id,kind,term,definition_zh,word_type,collocations_json AS collocations,context_sentence,article_id,status,interval_days,reps,consecutive_know,next_review_at,created_at FROM memory_items";
 
+fn collocations_json(item: &MemoryItem) -> Result<String, AppError> {
+    Ok(serde_json::to_string(&item.collocations)?)
+}
+
 pub fn insert_memory(conn: &Connection, item: &MemoryItem) -> Result<(), AppError> {
-    let collocations_json = serde_json::to_string(&item.collocations)?;
     conn.execute(
         "INSERT INTO memory_items
             (id,kind,term,definition_zh,word_type,collocations_json,context_sentence,
@@ -17,7 +20,7 @@ pub fn insert_memory(conn: &Connection, item: &MemoryItem) -> Result<(), AppErro
             item.term,
             item.definition_zh,
             item.word_type,
-            collocations_json,
+            collocations_json(item)?,
             item.context_sentence,
             item.article_id,
             item.status,
@@ -84,13 +87,12 @@ pub fn get_memory_by_term(
 
 /// Update learner-facing fields when an existing term is re-added.
 pub fn update_memory_meta(conn: &Connection, item: &MemoryItem) -> Result<(), AppError> {
-    let collocations_json = serde_json::to_string(&item.collocations)?;
     conn.execute(
         "UPDATE memory_items SET definition_zh=?1, word_type=?2, collocations_json=?3, context_sentence=?4, article_id=?5 WHERE id=?6",
         params![
             item.definition_zh,
             item.word_type,
-            collocations_json,
+            collocations_json(item)?,
             item.context_sentence,
             item.article_id,
             item.id
