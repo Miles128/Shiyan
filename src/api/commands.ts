@@ -5,7 +5,6 @@ import type {
   CatalogBook,
   CatalogStatus,
   FeedCategory,
-  FeedDiscoverCandidate,
   FeedSource,
   FeedValidation,
   FullTranslateResult,
@@ -115,10 +114,6 @@ export interface Commands {
   list_feed_categories: { args: void; ret: FeedCategory[] };
   list_source_article_counts: { args: void; ret: Record<string, number> };
   add_feed_category: { args: { label: string }; ret: FeedCategory };
-  discover_feeds: {
-    args: { categoryId: string };
-    ret: FeedDiscoverCandidate[];
-  };
   validate_feed: { args: { url: string }; ret: FeedValidation };
   subscribe_feed: {
     args: {

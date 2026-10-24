@@ -10,7 +10,6 @@ export type { CatalogBook } from "../../src-tauri/core/bindings/CatalogBook";
 export type { CatalogStatus } from "../../src-tauri/core/bindings/CatalogStatus";
 export type { ImportedBook } from "../../src-tauri/core/bindings/ImportedBook";
 export type { FeedCategory } from "../../src-tauri/core/bindings/FeedCategory";
-export type { FeedDiscoverCandidate } from "../../src-tauri/core/bindings/FeedDiscoverCandidate";
 export type { FeedSource } from "../../src-tauri/core/bindings/FeedSource";
 export type { FeedValidation } from "../../src-tauri/core/bindings/FeedValidation";
 export type { FullTranslateResult } from "../../src-tauri/core/bindings/FullTranslateResult";

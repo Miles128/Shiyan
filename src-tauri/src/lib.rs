@@ -50,7 +50,6 @@ pub fn run() {
             commands::feeds::add_feed_category,
             commands::feeds::subscribe_feed,
             commands::feeds::validate_feed,
-            commands::feeds::discover_feeds,
             commands::feeds::refresh_feeds,
             commands::feeds::cancel_refresh,
             commands::books::ensure_book_catalog,

@@ -1,7 +1,6 @@
 use shiyan_core::error::AppError;
 use shiyan_core::db::{self, DbState, FeedCategory, FeedSource};
 use shiyan_core::feeds::{self, FeedValidation, RefreshProgress, RefreshResult};
-use shiyan_core::vocab::{self, FeedDiscoverCandidate};
 use tauri::{AppHandle, Emitter};
 
 #[tauri::command]
@@ -92,22 +91,6 @@ pub async fn validate_feed(url: String) -> Result<FeedValidation, AppError> {
     crate::commands::spawn_blocking_err(move || Ok(feeds::validate_feed_url(&url))).await
 }
 
-#[tauri::command]
-pub async fn discover_feeds(
-    app: AppHandle,
-    category_id: String,
-) -> Result<Vec<FeedDiscoverCandidate>, AppError> {
-    let cfg = shiyan_core::config::load_config()?;
-    crate::commands::spawn_db(app, move |state| {
-        let cat = {
-            let conn = state.lock_read()?;
-            db::get_feed_category(&conn, &category_id)?
-        };
-        let cat = cat.ok_or_else(|| format!("未知分类：{category_id}"))?;
-        vocab::discover_rss_feeds(&cfg, &cat.id, &cat.label)
-    })
-    .await
-}
 #[tauri::command]
 pub async fn refresh_feeds(app: AppHandle) -> Result<RefreshResult, AppError> {
     use crate::commands::REFRESHING;

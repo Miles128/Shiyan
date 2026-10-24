@@ -14,8 +14,6 @@ export const apiFeeds = {
   listSourceArticleCounts: () => typedInvoke("list_source_article_counts"),
   addFeedCategory: (label: string) =>
     typedInvoke("add_feed_category", { label }),
-  discoverFeeds: (categoryId: string) =>
-    typedInvoke("discover_feeds", { categoryId }),
   validateFeed: (url: string) => typedInvoke("validate_feed", { url }),
   subscribeFeed: (input: {
     name: string;

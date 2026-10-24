@@ -6,7 +6,6 @@ use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::LazyLock;
-use ts_rs::TS;
 use uuid::Uuid;
 
 /// Shared LLM HTTP client — one connection pool instead of a new client per call.
@@ -401,45 +400,6 @@ pub fn add_or_merge_memory(db: &DbState, input: AddMemoryInput) -> Result<Memory
     };
     db::insert_memory(&conn, &item)?;
     Ok(item)
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
-pub struct FeedDiscoverCandidate {
-    pub name: String,
-    pub url: String,
-    #[serde(default)]
-    pub description: String,
-}
-
-/// Ask the configured LLM for free full-text English RSS feeds in a category.
-pub fn discover_rss_feeds(
-    cfg: &AppConfig,
-    category_id: &str,
-    category_label: &str,
-) -> Result<Vec<FeedDiscoverCandidate>, AppError> {
-    ensure_configured(cfg)?;
-    let system = r#"You help curate free, publicly available English news RSS/Atom feeds for language learners.
-Return ONLY a JSON array (no markdown fences) of 6–10 objects with keys:
-name (string, publication name),
-url (string, direct RSS or Atom feed URL, https preferred),
-description (string, one short English sentence).
-Prefer classic reputable outlets and blogs with free full-text or long excerpts.
-Do NOT suggest podcasts, paywalled-only feeds, or non-English sources.
-URLs must look like real feed endpoints (often ending in /feed, /rss, .xml)."#;
-    let user = format!(
-        "Category id: {category_id}\nCategory label: {category_label}\nRecommend English RSS feeds for this category."
-    );
-    let mut out: Vec<FeedDiscoverCandidate> =
-        chat_json(cfg, system, &user, "discover JSON")?;
-    out.retain(|c| {
-        let u = c.url.trim();
-        (u.starts_with("https://") || u.starts_with("http://")) && !c.name.trim().is_empty()
-    });
-    if out.is_empty() {
-        return Err("模型未返回可用的 RSS 候选".into());
-    }
-    Ok(out)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
