@@ -743,8 +743,9 @@ pub fn articles_missing_card_zh(conn: &Connection, limit: usize) -> Result<Vec<A
     )
 }
 
-/// Insert one book chapter. Same idempotency as [`insert_article_if_new`] (url
-/// UNIQUE) but stamps `chapter_no`, which the RSS/import insert leaves NULL.
+/// Test helper: insert a legacy book chapter (`chapter_no` set). Book import is
+/// gone, but existing libraries still carry these rows.
+#[cfg(test)]
 pub fn insert_book_chapter(
     conn: &Connection,
     a: &Article,

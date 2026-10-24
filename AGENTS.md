@@ -17,10 +17,9 @@ src/                  React 前端
   main.tsx            入口：Provider + HashRouter 路由表
   App.tsx             布局壳：侧边栏 + 全局刷新进度条 + 测评强跳
   store.tsx           AppConfig / Shell(订阅源+筛选) / Vocab(学习中生词) 三组 Context
-  api/                Tauri invoke 封装层（config/feeds/articles/memory/books/data + 类型门面）
+  api/                Tauri invoke 封装层（config/feeds/articles/memory/data + 类型门面）
   pages/              Home(主界面：文章列表+筛选) Reader(阅读) Vocab(生词/短语两库) Stats Settings(分页) Placement(词汇测评)
-  components/         SelectionPopover(划词浮窗) MemoryLibrary(生词/短语共用) SourceBoard ArticleRow ManageFeeds FeedDiscoverSection ReaderParagraph BookSearchDialog(Gutenberg 搜索导入)
-  bookDerived.ts      书籍域展示助手：作者名翻转/元信息行/书架分类/导入摘要（node-only vitest 可测，同 homeDerived 惯例）
+  components/         SelectionPopover(划词浮窗) MemoryLibrary(生词/短语共用) SourceBoard ArticleRow ManageFeeds ReaderParagraph
   homeDerived.ts      Home 列表派生逻辑：摘要/长度标签/按源分组/标签栏/今日推荐/难度加权排序
   wordResolve.ts      划词解析域：选区归一(lemma/全大写/短语判定) + 内置词典详情(word-details.json)
   useArticle.ts       Reader 加载 hook + 上次阅读/滚动位置记忆
@@ -32,12 +31,11 @@ src/                  React 前端
 src-tauri/            Cargo workspace（target/ 仍是唯一产物目录）
   src/                壳 crate `shiyan`：只含 Tauri 胶水，不写业务
     lib.rs            应用入口：打开 SQLite(app_data_dir) 注入 DbState(读写双连接)，注册全部 command；commands 直接 `use shiyan_core::…`，无重导出 shim
-    commands/         Tauri command 薄层(articles/books/config/feeds/memory/data)：阻塞工作 spawn_blocking，进度走 event("refresh-progress"/"translate-progress")；后台 enrichment 胶水(enrich_memory_background)也在这里。books 三命令：ensure_book_catalog(目录就绪)/search_books(本地搜)/import_book(gid 导入)
+    commands/         Tauri command 薄层(articles/config/feeds/memory/data)：阻塞工作 spawn_blocking，进度走 event("refresh-progress"/"translate-progress")；后台 enrichment 胶水(enrich_memory_background)也在这里
   core/               业务 crate `shiyan-core`：零 tauri 依赖（写 `use tauri::` 直接编译不过），改核心逻辑用 `cargo check/test -p shiyan-core` 编译面更小
-    src/db/           仓储层：mod(schema+migration) articles feeds curated_feeds(内置订阅源种子) translations memory(生词+短语统一表) books_catalog(Gutenberg 目录镜像 book_catalog 表：存查，不下载不解析)
-    src/books/        公版书订阅（Project Gutenberg）：mod(模型：一书=feed_sources 行 kind='book'，一章=普通文章 origin='book') catalog(官方 CSV 下载+镜像) text(.txt 清洗) chapters(章切分启发式) import(单书导入，单事务幂等)
-    src/feeds/        RSS 管线（按职责分模块）：net(HTTP/SSRF/URL校验) filters(可读性/英文/屏蔽/付费墙) extract(页面抽取) dedup(URL/标题去重) pipeline(refresh主流程) cleanup(审计/清理/修复) enrich(翻译/标签回填) tests
-    src/vocab.rs      OpenAI 兼容 LLM 客户端：段落翻译、生词/短语 enrichment、RSS 发现
+    src/db/           仓储层：mod(schema+migration) articles feeds curated_feeds(内置订阅源种子) translations memory(生词+短语统一表)
+    src/feeds/        RSS 管线（按职责分模块）：net(HTTP/SSRF/URL校验) filters(可读性/英文/屏蔽/付费墙) extract(页面抽取) dedup(URL/标题去重) pipeline(refresh主流程) cleanup(清理/保留) enrich(翻译/标签回填) tests
+    src/vocab.rs      OpenAI 兼容 LLM 客户端：段落翻译、生词/短语 enrichment
     src/translate.rs  翻译缓存 + 编排层
     src/reflow.rs     段落整形（core 内部，仅 feeds/测试调用）
     src/article_view.rs Reader 载荷组装(ArticleView = 文章+段落+缓存翻译)
@@ -54,8 +52,8 @@ src-tauri/            Cargo workspace（target/ 仍是唯一产物目录）
 - 文章幂等去重按 `url UNIQUE`，`insert_article_if_new` 冲突即跳过；RSS 旧文只在 RSS 正文可信且更长时升级。
 - 正文阈值：RSS 正文 ≥2000 字符且像可读文章才信任；否则须抓文章页。导航/关键词墙、链接列表、不足 400 字散文（MIN_FULLTEXT_CHARS）一律不入库，刷新时清掉。
 - `origin` 字段区分 rss/book 两种来源；refresh 的清理(purge)只处理 rss 来源，永不删书章。
-- 公版书复用订阅模型：一书 = `feed_sources` 行(`kind='book'`)，一章 = 普通文章(`origin='book'`、`chapter_no=章序`)，除导入/搜索外全链路不感知书籍；导入按 url 幂等，purge 同样永不碰 `origin='book'`。
-- `title_zh` DB 列已废弃：代码零引用，仅 schema/迁移保留（免迁移），不要再往结构体或 SQL 里加回。
+- 公版书已移除导入/搜索：旧库里 `kind='book'` 的订阅源与 `origin='book'` 的章节保持可读，刷新与保留策略继续跳过它们；purge 永不碰 `origin='book'`。
+- `title_zh`、`tags_json`、`known_words`、`lookup_history`、`removed_feeds`、`book_catalog` 等旧结构均由迁移删除，不要再往结构体或 SQL 里加回。
 - LLM 配置在 `config.local.json`（gitignore）；无 Key 时翻译功能优雅降级。
 
 前端测试约定：vitest 为 node 环境、只收 `src/**/*.test.ts`，测试文件不得拖 react/store 依赖图。可测试的纯逻辑从组件抽出，但**按域归堆**（如 homeDerived/wordResolve），不要一个函数开一个文件；组件内的逻辑要测时抽到域模块而不是建孤儿文件。

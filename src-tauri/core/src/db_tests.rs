@@ -1713,45 +1713,6 @@ fn export_memory_csv_dumps_all_libraries_with_escaping() {
 }
 
 #[test]
-fn catalog_search_ranks_prefix_first_and_filters_by_shelf() {
-    let tmp = TmpDb::new("catalog-search");
-    let conn = tmp.conn();
-    let book = |gid: i64, title: &str, authors: &str, shelf: &str| db::CatalogBook {
-        gid,
-        title: title.into(),
-        authors: authors.into(),
-        issued: "1871-01-01".into(),
-        shelf: shelf.into(),
-        imported: false,
-    };
-    for b in [
-        book(1, "Moby-Dick", "Melville, Herman, 1819-1891", "Fiction"),
-        book(2, "The Moby-Dick Companion", "Smith, John", "Reference"),
-        book(3, "Typee", "Melville, Herman, 1819-1891", "Reference"),
-        book(4, "Moby-Dick Study Guide", "Lee, Amy", "Reference"),
-    ] {
-        db::insert_catalog_row(&conn, &b).unwrap();
-    }
-
-    // Prefix matches rank before mere substring matches; ties by shorter title.
-    let hits = db::search_catalog(&conn, "moby-dick", "", 10).unwrap();
-    let titles: Vec<&str> = hits.iter().map(|b| b.title.as_str()).collect();
-    assert_eq!(
-        titles,
-        ["Moby-Dick", "Moby-Dick Study Guide", "The Moby-Dick Companion"]
-    );
-
-    // A non-empty shelf restricts to that shelf…
-    let fiction = db::search_catalog(&conn, "melville", "Fiction", 10).unwrap();
-    assert_eq!(fiction.len(), 1);
-    assert_eq!(fiction[0].title, "Moby-Dick");
-
-    // …while an empty shelf keeps every shelf (matches on author names too).
-    let all = db::search_catalog(&conn, "melville", "", 10).unwrap();
-    assert_eq!(all.len(), 2);
-}
-
-#[test]
 fn reorder_feeds_assigns_priority_within_category() {
     let tmp = TmpDb::new("reorder");
     let conn = tmp.conn();
@@ -1822,7 +1783,7 @@ fn v19_book_feed_and_chapters_behave_like_subscriptions() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(catalog_table, 1, "book_catalog should exist");
+    assert_eq!(catalog_table, 0, "book_catalog is gone after v6");
 
     let feed = db::insert_book_feed(
         &conn,

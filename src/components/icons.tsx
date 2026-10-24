@@ -31,15 +31,6 @@ export function IconBack({ size = 16 }: IconProps) {
   );
 }
 
-export function IconBook({ size = 15 }: IconProps) {
-  return (
-    <svg {...base(size)}>
-      <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H19v18H6.5A2.5 2.5 0 0 1 4 18.5z" />
-      <path d="M8 3v18" />
-    </svg>
-  );
-}
-
 export function IconClose({ size = 14 }: IconProps) {
   return (
     <svg {...base(size)}>

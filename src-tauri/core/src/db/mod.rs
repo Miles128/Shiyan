@@ -5,14 +5,12 @@
 //! entry point.
 
 mod articles;
-mod books_catalog;
 mod curated_feeds;
 mod feeds;
 mod memory;
 mod translations;
 
 pub use articles::*;
-pub use books_catalog::*;
 pub use curated_feeds::*;
 pub use memory::*;
 pub use feeds::*;
@@ -297,30 +295,6 @@ pub struct FeedCategory {
     pub builtin: bool,
 }
 
-/// One row of the Project Gutenberg catalog mirror (`book_catalog`). Search
-/// runs locally against this table, so the UI never depends on a third-party
-/// API. Kept out of `FeedSource` / `Article` on purpose: a catalog row is not a
-/// subscription and carries no reading state.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
-#[ts(export)]
-pub struct CatalogBook {
-    /// Project Gutenberg ebook number.
-    #[ts(type = "number")]
-    pub gid: i64,
-    pub title: String,
-    /// "Melville, Herman, 1819-1891" — CSV form, left as published.
-    pub authors: String,
-    /// First issue date (`1871-01-01`), '' when the catalog has none.
-    pub issued: String,
-    /// Coarse genre from the first `Category:` entry of the catalog's
-    /// `Bookshelves` column; '' when the catalog has none.
-    pub shelf: String,
-    /// Already imported as a book feed? Filled by the search command.
-    #[serde(default)]
-    pub imported: bool,
-}
-
-
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct TranslationRow {
@@ -558,13 +532,6 @@ CREATE TABLE IF NOT EXISTS app_meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS book_catalog (
-    gid INTEGER PRIMARY KEY,
-    title TEXT NOT NULL DEFAULT '',
-    authors TEXT NOT NULL DEFAULT '',
-    issued TEXT NOT NULL DEFAULT '',
-    shelf TEXT NOT NULL DEFAULT ''
-);
 CREATE INDEX IF NOT EXISTS idx_articles_category ON articles(category);
 CREATE INDEX IF NOT EXISTS idx_articles_fetched ON articles(fetched_at DESC);
 CREATE INDEX IF NOT EXISTS idx_translations_article ON translations(article_id);
@@ -577,7 +544,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_article ON memory_items(article_id);
 /// Version-gated migrations. To add one: raise `LATEST_VERSION` and apply its
 /// DDL inside `migrate` when `stored < N`. Stamp each version with its own
 /// number (never `LATEST_VERSION`) so later steps are not skipped.
-pub(crate) const LATEST_VERSION: i64 = 5;
+pub(crate) const LATEST_VERSION: i64 = 6;
 
 /// Drop the deprecated `articles.title_zh` column (v2). Tolerates "no such
 /// column": fresh baselines never had it.
@@ -668,6 +635,14 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), AppError> {
         conn.execute("DROP TABLE IF EXISTS removed_feeds", [])?;
         conn.pragma_update(None, "user_version", 5)?;
         stored = 5;
+    }
+
+    if stored < 6 {
+        // Book search/import is gone; imported chapters stay as ordinary
+        // articles, so only the catalog mirror is dropped.
+        conn.execute("DROP TABLE IF EXISTS book_catalog", [])?;
+        conn.pragma_update(None, "user_version", 6)?;
+        stored = 6;
     }
 
     if stored < LATEST_VERSION {

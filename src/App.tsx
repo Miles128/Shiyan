@@ -7,11 +7,10 @@ import {
   shouldHideAppNav,
   shouldShowPlacementNav,
 } from "./placement/engine";
-import { useAppConfig, useFeeds, useFilters, useSearchQuery } from "./store";
+import { useAppConfig, useFilters, useSearchQuery } from "./store";
 import { useToast } from "./components/Toaster";
 import { emitEvent } from "./events";
 import {
-  IconBook,
   IconClose,
   IconFilter,
   IconRefresh,
@@ -22,11 +21,9 @@ import {
   IconVocab,
 } from "./components/icons";
 import Sidebar from "./components/Sidebar";
-import BookSearchDialog from "./components/BookSearchDialog";
-import { importSummary } from "./bookDerived";
 import { applyTheme, isThemePref } from "./theme";
 import { api } from "./api";
-import { type ImportedBook, type RefreshProgress } from "./api";
+import { type RefreshProgress } from "./api";
 import "./App.css";
 
 /**
@@ -44,8 +41,6 @@ function beginWindowDrag(e: { button: number; target: EventTarget | null }) {
 
 export default function App() {
   const [progress, setProgress] = useState<RefreshProgress | null>(null);
-  /** Book search dialog (the only books entry point — topbar only). */
-  const [booksOpen, setBooksOpen] = useState(false);
   /** Home search input is collapsed until opened or text is present. */
   const [searchOpen, setSearchOpen] = useState(false);
   const toast = useToast();
@@ -54,7 +49,6 @@ export default function App() {
   const { cfg, ready, loadError, refresh } = useAppConfig();
   const { query, setQuery } = useSearchQuery();
   const { filtersOpen, setFiltersOpen } = useFilters();
-  const { reloadFeeds } = useFeeds();
 
   useEffect(() => {
     let cancelled = false;
@@ -113,23 +107,6 @@ export default function App() {
     } catch (e) {
       toast.err(String(e));
     }
-  }
-
-  /**
-   * A book arrives as a feed plus one article per chapter, so the sidebar needs
-   * a reload and the reader opens on chapter 1 — the same landing behaviour as
-   * importing a single article.
-   */
-  async function onBookImported(book: ImportedBook) {
-    setBooksOpen(false);
-    toast.ok(importSummary(book.title, book.chapter_count));
-    try {
-      await reloadFeeds();
-    } catch {
-      // The reader landing is the real feedback; a failed sidebar reload just
-      // means the tree updates on the next paint.
-    }
-    navigate(`/article/${book.first_article_id}`);
   }
 
   const forcePlacement = shouldForcePlacement(cfg);  const hideNav = shouldHideAppNav({
@@ -271,16 +248,6 @@ export default function App() {
                 <span className="topbar-divider" aria-hidden />
               </>
             )}
-            <button
-              type="button"
-              className={`topbar-btn${booksOpen ? " active" : ""}`}
-              onClick={() => setBooksOpen(true)}
-              title="搜索并导入英文书籍（Project Gutenberg）"
-              aria-label="搜索英文书籍"
-              aria-expanded={booksOpen}
-            >
-              <IconBook />
-            </button>
             <NavLink
               to="/vocab"
               className="topbar-btn"
@@ -320,12 +287,6 @@ export default function App() {
         <Outlet />
         </main>
       </div>
-      {booksOpen && (
-        <BookSearchDialog
-          onClose={() => setBooksOpen(false)}
-          onImported={(book) => void onBookImported(book)}
-        />
-      )}
       {(showBar || showDoneBriefly) && progress && (
         <div
           className={`refresh-progress ${progress.phase === "done" ? "done" : ""}`}

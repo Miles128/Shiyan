@@ -13,7 +13,6 @@
 //! never through an `AppHandle`.
 
 pub mod article_view;
-pub mod books;
 pub mod config;
 pub mod db;
 pub mod error;
