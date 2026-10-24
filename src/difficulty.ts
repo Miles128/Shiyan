@@ -176,7 +176,7 @@ export type DifficultyResult = {
   /** Raw score; bucket it with `difficultyFromScore` + calibrated edges. */
   score: number;
   avgSentenceWords: number;
-  /** Fraction of tokens the learner knows (lexicon + known/learning lists). */
+  /** Fraction of tokens in the learner's lexicon or learning list. */
   coverage: number;
 };
 
@@ -188,7 +188,6 @@ export function articleDifficulty(
   rawContent: string,
   learningTerms: string[],
   prefs: DifficultyPrefs,
-  knownTerms: string[] = [],
 ): DifficultyResult | null {
   const content =
     rawContent.length > MAX_SAMPLE_CHARS
@@ -200,17 +199,10 @@ export function articleDifficulty(
   const learning = new Set(
     learningTerms.map(normalizeKey).filter((t) => t.length >= 2),
   );
-  const known = new Set(
-    knownTerms.map(normalizeKey).filter((t) => t.length >= 2),
-  );
 
   let total = 0;
   let covered = 0;
   for (const tok of tokens) {
-    if (known.has(tok)) {
-      covered += 1;
-      continue; // known words add no difficulty
-    }
     total += wordDifficultyWeight(tok, prefs, learning.has(tok));
     // Words already in the learning set are also "recognised" for coverage.
     if (learning.has(tok)) covered += 1;

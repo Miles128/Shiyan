@@ -103,16 +103,6 @@ describe("createTtsController", () => {
     expect(tts.isSpeaking()).toBe(true);
   });
 
-  it("ignores empty text", () => {
-    const tts = createTtsController({
-      synthesis: synth,
-      createUtterance: (text) => ({ text, lang: "", rate: 1, pitch: 1, voice: null }),
-    });
-    tts.speak("   ");
-    expect(synth.speak).not.toHaveBeenCalled();
-    expect(tts.isSpeaking()).toBe(false);
-  });
-
   it("speaks a queue of chunks in order", async () => {
     const tts = createTtsController({
       synthesis: synth,

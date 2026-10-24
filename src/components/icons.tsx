@@ -68,16 +68,6 @@ export function IconFilter({ size = 15 }: IconProps) {
   );
 }
 
-export function IconImport({ size = 15 }: IconProps) {
-  return (
-    <svg {...base(size)}>
-      <path d="M12 3v12" />
-      <path d="m7 10 5 5 5-5" />
-      <path d="M4 19h16" />
-    </svg>
-  );
-}
-
 export function IconRefresh({ size = 15 }: IconProps) {
   return (
     <svg {...base(size)}>

@@ -1,6 +1,5 @@
 use shiyan_core::db::{self, DbState, MemoryItem};
 use shiyan_core::error::AppError;
-use shiyan_core::srs::{apply_rating, Rating};
 use shiyan_core::vocab::{self, AddMemoryInput};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
@@ -57,30 +56,6 @@ pub fn list_memory(
 ) -> Result<Vec<MemoryItem>, AppError> {
     let conn = state.lock_read()?;
     db::list_memory(&conn, kind.as_deref(), status.as_deref())
-}
-
-#[tauri::command]
-pub fn due_memory(
-    state: tauri::State<'_, DbState>,
-    kind: Option<String>,
-) -> Result<Vec<MemoryItem>, AppError> {
-    let conn = state.lock_read()?;
-    db::due_memory(&conn, kind.as_deref())
-}
-
-#[tauri::command]
-pub fn review_memory(
-    state: tauri::State<'_, DbState>,
-    id: String,
-    rating: String,
-) -> Result<MemoryItem, AppError> {
-    let r = Rating::from_str(&rating)?;
-    let conn = state.lock_write()?;
-    let mut item =
-        db::get_memory(&conn, &id)?.ok_or_else(|| "memory item not found".to_string())?;
-    apply_rating(&mut item, r);
-    db::update_memory_review(&conn, &item)?;
-    Ok(item)
 }
 
 #[tauri::command]

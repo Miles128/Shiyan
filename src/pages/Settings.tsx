@@ -96,7 +96,7 @@ export default function Settings() {
 
   async function restoreDb() {
     const confirmed = window.confirm(
-      "恢复将覆盖当前全部数据（文章、生词、复习进度、已认识词）。\n" +
+      "恢复将覆盖当前全部数据（文章、订阅源、生词与短语）。\n" +
         "重启前当前数据不会丢失；恢复在重启拾言后生效，且会自动留一份 .pre-restore.bak。\n\n确定继续？",
     );
     if (!confirmed) return;
@@ -263,7 +263,7 @@ export default function Settings() {
         <section className="settings-section">
           <h2>备份与恢复</h2>
           <p className="muted">
-            备份生成整个数据库的一致快照（文章、生词、复习进度、已认识词）。
+            备份生成整个数据库的一致快照（文章、订阅源、生词与短语）。
             恢复时选择备份文件，重启拾言后生效；当前数据会自动备份为 .pre-restore.bak。
           </p>
           <div className="data-actions">

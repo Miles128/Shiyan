@@ -90,8 +90,6 @@ export const apiArticles = {
   getLearningStats: () => typedInvoke("get_learning_stats"),
   getReadingStats: () => typedInvoke("get_reading_stats"),
   fillMissingCardZh: () => typedInvoke("fill_missing_card_zh"),
-  importArticleUrl: (url: string) => typedInvoke("import_article_url", { url }),
-  importArticleFile: (path: string) => typedInvoke("import_article_file", { path }),
   /** Re-fetch articles whose stored body lost paragraph breaks. */
   repairParagraphs: (limit?: number) =>
     typedInvoke("repair_paragraphs", { limit: limit ?? null }),

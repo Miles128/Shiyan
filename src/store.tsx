@@ -11,7 +11,7 @@ import { api, defaultAppConfig, type AppConfig, type FeedSource } from "./api";
 import { onEvent } from "./events";
 import { invalidateQueries } from "./query";
 import { normalizeReadingPrefs } from "./readingPrefs";
-import { isCefrLevel, isFreqBand, normalizeKey } from "./wordLevels";
+import { isCefrLevel, isFreqBand } from "./wordLevels";
 
 /** Merge raw config over defaults, clamping difficulty fields. */
 export function normalizeConfig(raw: AppConfig): AppConfig {
@@ -113,25 +113,12 @@ type VocabState = {
   /** Term strings of everything currently in `learning` status. */
   learningTerms: string[];
   refreshLearningTerms: () => Promise<void>;
-  /** Lowercased terms the learner marked as already known. */
-  knownTerms: string[];
-  refreshKnownTerms: () => Promise<void>;
-  markKnown: (term: string) => Promise<void>;
-  unmarkKnown: (term: string) => Promise<void>;
 };
 
 const VocabContext = createContext<VocabState | null>(null);
 
-type KnownState = Pick<
-  VocabState,
-  "knownTerms" | "refreshKnownTerms" | "markKnown" | "unmarkKnown"
->;
-
-const KnownContext = createContext<KnownState | null>(null);
-
 export function VocabProvider({ children }: { children: ReactNode }) {
   const [learningTerms, setLearningTerms] = useState<string[]>([]);
-  const [knownTerms, setKnownTerms] = useState<string[]>([]);
 
   const refreshLearningTerms = useCallback(async () => {
     try {
@@ -145,68 +132,20 @@ export function VocabProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const refreshKnownTerms = useCallback(async () => {
-    try {
-      setKnownTerms(await api.listKnownWords());
-    } catch {
-      // optional
-    }
-  }, []);
-
-  const markKnown = useCallback(async (term: string) => {
-    const key = normalizeKey(term);
-    if (!key) return;
-    await api.addKnownWord(key);
-    setKnownTerms((prev) => (prev.includes(key) ? prev : [...prev, key]));
-  }, []);
-
-  const unmarkKnown = useCallback(async (term: string) => {
-    const key = normalizeKey(term);
-    await api.removeKnownWord(key);
-    setKnownTerms((prev) => prev.filter((t) => t !== key));
-  }, []);
-
   useEffect(() => {
     void refreshLearningTerms();
-    void refreshKnownTerms();
-  }, [refreshLearningTerms, refreshKnownTerms]);
+  }, [refreshLearningTerms]);
 
   const value = useMemo(
-    () => ({
-      learningTerms,
-      refreshLearningTerms,
-      knownTerms,
-      refreshKnownTerms,
-      markKnown,
-      unmarkKnown,
-    }),
-    [learningTerms, refreshLearningTerms, knownTerms, refreshKnownTerms, markKnown, unmarkKnown],
+    () => ({ learningTerms, refreshLearningTerms }),
+    [learningTerms, refreshLearningTerms],
   );
-  // Split values so known-only consumers don't re-render on learning changes.
-  // `VocabContext` stays for existing `useVocab` callers.
-  const knownValue = useMemo(
-    () => ({ knownTerms, refreshKnownTerms, markKnown, unmarkKnown }),
-    [knownTerms, refreshKnownTerms, markKnown, unmarkKnown],
-  );
-  return (
-    <VocabContext.Provider value={value}>
-      <KnownContext.Provider value={knownValue}>
-        {children}
-      </KnownContext.Provider>
-    </VocabContext.Provider>
-  );
+  return <VocabContext.Provider value={value}>{children}</VocabContext.Provider>;
 }
 
 export function useVocab(): VocabState {
   const ctx = useContext(VocabContext);
   if (!ctx) throw new Error("useVocab must be used within VocabProvider");
-  return ctx;
-}
-
-/** Subscribes only to known terms — won't re-render on learning changes. */
-export function useKnown(): KnownState {
-  const ctx = useContext(KnownContext);
-  if (!ctx) throw new Error("useKnown must be used within VocabProvider");
   return ctx;
 }
 

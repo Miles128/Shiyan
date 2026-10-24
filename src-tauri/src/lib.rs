@@ -25,7 +25,6 @@ pub fn run() {
                 let _ = db::backfill_word_counts(&conn);
                 let _ = feeds::purge_blocked_articles(&conn);
                 let _ = feeds::clear_stale_paragraph_translations_once(&conn);
-                let _ = db::normalize_known_words_once(&conn);
             }
             app.manage(state);
             Ok(())
@@ -59,8 +58,6 @@ pub fn run() {
             commands::books::search_books,
             commands::books::import_book,
             commands::articles::fill_missing_card_zh,
-            commands::articles::import_article_url,
-            commands::articles::import_article_file,
             commands::articles::repair_paragraphs,
             commands::articles::translate_paragraph,
             commands::articles::translate_selection,
@@ -68,14 +65,9 @@ pub fn run() {
             commands::articles::translate_full_article,
             commands::memory::add_memory,
             commands::memory::list_memory,
-            commands::memory::due_memory,
-            commands::memory::review_memory,
             commands::memory::set_memory_status,
             commands::memory::delete_memory,
-            commands::memory::export_memory_csv,
-            commands::known::list_known_words,
-            commands::known::add_known_word,
-            commands::known::remove_known_word
+            commands::memory::export_memory_csv
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

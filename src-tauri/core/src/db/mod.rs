@@ -1,21 +1,19 @@
 //! SQLite storage: schema + migrations + per-domain repositories.
 //!
 //! Sub-modules own their tables and re-export the repository functions at the
-//! `db::` root so callers (`feeds`, `import_file`, `commands`, tests) keep a
-//! single facade entry point.
+//! `db::` root so callers (`feeds`, `commands`, tests) keep a single facade
+//! entry point.
 
 mod articles;
 mod books_catalog;
 mod curated_feeds;
 mod feeds;
-mod known;
 mod memory;
 mod translations;
 
 pub use articles::*;
 pub use books_catalog::*;
 pub use curated_feeds::*;
-pub use known::*;
 pub use memory::*;
 pub use feeds::*;
 pub use translations::*;
@@ -228,8 +226,6 @@ pub struct ReadingStats {
     pub phrases_learning: i64,
     #[ts(type = "number")]
     pub phrases_mastered: i64,
-    #[ts(type = "number")]
-    pub due_today: i64,
     pub top_sources: Vec<SourceStat>,
 }
 
@@ -649,6 +645,7 @@ CREATE TABLE IF NOT EXISTS memory_items (
     created_at TEXT NOT NULL,
     FOREIGN KEY (article_id) REFERENCES articles(id) ON DELETE SET NULL
 );
+-- 已认识词功能已移除，表零引用，仅保留 schema 免迁移。
 CREATE TABLE IF NOT EXISTS known_words (
     term TEXT PRIMARY KEY,
     created_at TEXT NOT NULL

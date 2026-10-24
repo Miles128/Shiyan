@@ -3,11 +3,10 @@ import { Link } from "react-router-dom";
 import { useAppConfig, useVocab } from "../store";
 import { api } from "../api";
 import { placementSummaryText } from "../placement/engine";
-import KnownWords from "../components/KnownWords";
 import MemoryLibrary from "../components/MemoryLibrary";
 import PageBack from "../components/PageBack";
 
-type Library = "vocab" | "phrases" | "known";
+type Library = "vocab" | "phrases";
 
 export default function Vocab() {
   const { refreshLearningTerms } = useVocab();
@@ -32,7 +31,7 @@ export default function Vocab() {
       <header className="page-header page-header-slim">
         <div>
           <p className="muted">
-            {placementSummary ?? "生词与短语的学习与复习"}
+            {placementSummary ?? "生词与短语"}
           </p>
         </div>
         <div className="row-actions">
@@ -52,7 +51,6 @@ export default function Vocab() {
           [
             ["vocab", "生词"],
             ["phrases", "短语"],
-            ["known", "已认识"],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -65,9 +63,7 @@ export default function Vocab() {
         ))}
       </div>
 
-      {library === "known" ? (
-        <KnownWords />
-      ) : library === "phrases" ? (
+      {library === "phrases" ? (
         <MemoryLibrary
           kind="phrase"
           searchPlaceholder="搜索短语 / 释义 / 例句"

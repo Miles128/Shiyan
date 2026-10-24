@@ -109,7 +109,6 @@ export function useInfiniteScroll(
 type DifficultyOptions = {
   articles: ArticleListItem[];
   learningTerms: string[];
-  knownTerms: string[];
   cefrLevel: CefrLevel;
   freqBand: FreqBand;
 };
@@ -123,7 +122,6 @@ type DifficultyOptions = {
 export function useHomeDifficulty({
   articles,
   learningTerms,
-  knownTerms,
   cefrLevel,
   freqBand,
 }: DifficultyOptions) {
@@ -137,10 +135,6 @@ export function useHomeDifficulty({
     () => learningTerms.map(normalizeKey).filter((t) => t.length >= 2).sort().join("\n"),
     [learningTerms],
   );
-  const knownKey = useMemo(
-    () => knownTerms.map(normalizeKey).filter((t) => t.length >= 2).sort().join("\n"),
-    [knownTerms],
-  );
   // Per-article score cache: `loadMore` appends rows, so only genuinely new
   // (id, excerpt, prefs, vocab) tuples pay for tokenize + dict lookup.
   // Vocab identity is a short hash (not the raw terms) so cache keys stay small.
@@ -148,11 +142,11 @@ export function useHomeDifficulty({
   // return-from-Reader pass over the same 60 rows is then all hits instead
   // of ~25ms of main-thread recompute.
   const vocabHash = useMemo(() => {
-    const s = `${learningKey}\n${knownKey}`;
+    const s = learningKey;
     let h = 0;
     for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
     return `${cefrLevel}|${freqBand}|${s.length}|${h.toString(36)}`;
-  }, [learningKey, knownKey, cefrLevel, freqBand]);
+  }, [learningKey, cefrLevel, freqBand]);
   return useMemo(() => {
     const cache = difficultyScoreCache;
     const scored: { id: string; score: number | null }[] = [];
@@ -167,7 +161,6 @@ export function useHomeDifficulty({
         a.excerpt,
         learningTerms,
         difficultyPrefs,
-        knownTerms,
       );
       const score = result?.score ?? null;
       cache.set(ck, a.excerpt, score);

@@ -93,13 +93,7 @@ export default function Home() {
   const toast = useToast();
   const [learningStats, setLearningStats] = useState<LearningStats | null>(null);
 
-  const {
-    learningTerms,
-    knownTerms,
-    refreshLearningTerms,
-    markKnown,
-    unmarkKnown,
-  } = useVocab();
+  const { learningTerms, refreshLearningTerms } = useVocab();
   const tts = useTts();
   const freqBand: FreqBand = isFreqBand(cfg.freq_band) ? cfg.freq_band : 3000;
   const cefrLevel: CefrLevel = isCefrLevel(cfg.cefr_level)
@@ -295,7 +289,6 @@ export default function Home() {
   const { difficultyById, levelCounts } = useHomeDifficulty({
     articles,
     learningTerms,
-    knownTerms,
     cefrLevel,
     freqBand,
   });
@@ -385,9 +378,6 @@ export default function Home() {
     onError: (m) => toast.err(m),
     onSuccess: (m) => toast.ok(m),
     onVocabAdded: () => void refreshLearningTerms(),
-    knownTerms,
-    markKnown,
-    unmarkKnown,
   });
 
   // Keyboard flow (j/k/Enter/o): navigate exactly what is on screen.
@@ -578,8 +568,7 @@ export default function Home() {
       {!loading && articles.length === 0 && (
         <div className="empty">
           <p>
-            还没有文章。点上方「刷新」拉取订阅；也可以用右上角按钮导入文件，
-            或在 设置 → 订阅 里粘贴文章链接。
+            还没有文章。点上方「刷新」拉取订阅，或在 设置 → 订阅 里粘贴 RSS 链接。
           </p>
         </div>
       )}

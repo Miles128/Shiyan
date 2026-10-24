@@ -144,10 +144,7 @@ export default function Reader() {
   const { cfg } = useAppConfig();
   const {
     learningTerms: vocabTerms,
-    knownTerms,
     refreshLearningTerms,
-    markKnown,
-    unmarkKnown,
   } = useVocab();
   const prefs: DifficultyPrefs = useMemo(
     () => ({
@@ -173,9 +170,6 @@ export default function Reader() {
     onError: (m) => setError(m),
     onSuccess: (m) => wordToast.ok(m),
     onVocabAdded: () => void refreshLearningTerms(),
-    knownTerms,
-    markKnown,
-    unmarkKnown,
   });
 
   useEffect(() => {
@@ -371,7 +365,6 @@ export default function Reader() {
           text={text}
           prefs={prefs}
           learningTerms={vocabTerms}
-          knownTerms={knownTerms}
           onHardClick={onHardWordClick}
           showGloss={cfg.show_hard_word_gloss}
         />
@@ -384,7 +377,7 @@ export default function Reader() {
       }
       return children;
     },
-    [lexReady, prefs, vocabTerms, knownTerms, onHardWordClick, cfg.show_hard_word_gloss],
+    [lexReady, prefs, vocabTerms, onHardWordClick, cfg.show_hard_word_gloss],
   );
 
   async function toggleFullTranslation() {
@@ -484,7 +477,6 @@ export default function Reader() {
                 text={title}
                 prefs={prefs}
                 learningTerms={vocabTerms}
-                knownTerms={knownTerms}
                 onHardClick={onHardWordClick}
               />
             ) : (

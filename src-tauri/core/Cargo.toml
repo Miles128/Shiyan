@@ -1,7 +1,7 @@
 [package]
 name = "shiyan-core"
 version = "0.1.0"
-description = "Shiyan business core: SQLite repositories, RSS pipeline, LLM clients, ranking, SRS — tauri-free by construction"
+description = "Shiyan business core: SQLite repositories, RSS pipeline, LLM clients, ranking — tauri-free by construction"
 edition = "2021"
 
 [dependencies]
@@ -20,8 +20,5 @@ thiserror = "2"
 html2text = "0.13"
 readability = { version = "0.3", default-features = false }
 url = "2"
-pdf-extract = "0.12.0"
 csv = "1"
-zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
-quick-xml = "0.41"
 ts-rs = "10"

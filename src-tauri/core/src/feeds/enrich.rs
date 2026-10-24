@@ -155,32 +155,6 @@ pub fn fill_missing_card_zh(
     )
 }
 
-/// Translate + persist the summary card for a single article (used right
-/// after a URL import).
-pub fn fill_article_card_zh(
-    db: &DbState,
-    cfg: &AppConfig,
-    article: &mut crate::db::Article,
-) -> Result<(), AppError> {
-    if !article.summary_zh.is_empty() {
-        return Ok(());
-    }
-    if cfg.api_key.trim().is_empty() {
-        return Ok(());
-    }
-    let cards = [vocab::card_from_article(&article.title, &article.content_text)];
-    let translated = vocab::translate_article_cards(cfg, &cards)?;
-    let Some(card) = translated.into_iter().next() else {
-        return Ok(());
-    };
-    let conn = db.lock_write()?;
-    if article.summary_zh.is_empty() && !card.summary_zh.is_empty() {
-        db::set_article_summary_zh(&conn, &article.id, &card.summary_zh)?;
-        article.summary_zh = card.summary_zh;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

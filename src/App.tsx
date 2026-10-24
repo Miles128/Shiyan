@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open } from "@tauri-apps/plugin-dialog";
 import {
   shouldForcePlacement,
   shouldHideAppNav,
@@ -15,7 +14,6 @@ import {
   IconBook,
   IconClose,
   IconFilter,
-  IconImport,
   IconRefresh,
   IconSearch,
   IconSettings,
@@ -46,7 +44,6 @@ function beginWindowDrag(e: { button: number; target: EventTarget | null }) {
 
 export default function App() {
   const [progress, setProgress] = useState<RefreshProgress | null>(null);
-  const [importingFile, setImportingFile] = useState(false);
   /** Book search dialog (the only books entry point — topbar only). */
   const [booksOpen, setBooksOpen] = useState(false);
   /** Home search input is collapsed until opened or text is present. */
@@ -115,34 +112,6 @@ export default function App() {
       await api.cancelRefresh();
     } catch (e) {
       toast.err(String(e));
-    }
-  }
-
-  async function onImportFile() {
-    if (importingFile) return;
-    let selected: string | string[] | null;
-    try {
-      selected = await open({
-        multiple: false,
-        filters: [
-          { name: "文档", extensions: ["txt", "md", "markdown", "pdf", "docx"] },
-        ],
-      });
-    } catch (e) {
-      toast.err(String(e));
-      return;
-    }
-    if (selected === null) return;
-    const path = Array.isArray(selected) ? selected[0] : selected;
-    if (!path) return;
-    setImportingFile(true);
-    try {
-      const article = await api.importArticleFile(path);
-      navigate(`/article/${article.id}`);
-    } catch (e) {
-      toast.err(String(e));
-    } finally {
-      setImportingFile(false);
     }
   }
 
@@ -302,16 +271,6 @@ export default function App() {
                 <span className="topbar-divider" aria-hidden />
               </>
             )}
-            <button
-              type="button"
-              className="topbar-btn"
-              onClick={() => void onImportFile()}
-              disabled={importingFile}
-              title="导入文件（txt / pdf / docx）"
-              aria-label="导入文件"
-            >
-              <IconImport />
-            </button>
             <button
               type="button"
               className={`topbar-btn${booksOpen ? " active" : ""}`}

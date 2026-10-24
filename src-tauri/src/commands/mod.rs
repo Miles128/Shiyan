@@ -9,7 +9,6 @@ pub mod books;
 pub mod config;
 pub mod data;
 pub mod feeds;
-pub mod known;
 pub mod memory;
 
 use shiyan_core::db::DbState;
@@ -147,7 +146,7 @@ mod tests {
             );
         }
         assert!(
-            handlers.len() > 40,
+            handlers.len() > 30,
             "only {} commands parsed out of the handler list, which is not a real read of it",
             handlers.len()
         );

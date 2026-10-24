@@ -1570,25 +1570,6 @@ mark.vocab-hit:hover {
   background: var(--panel);
 }
 
-.known-add {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.known-add input {
-  flex: 1;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  background: var(--panel);
-}
-
-.known-add .muted {
-  white-space: nowrap;
-}
-
 /* Single-row toolbar for the vocab library: tabs + search on one line. */
 .vocab-toolbar {
   display: flex;
@@ -1717,58 +1698,6 @@ mark.vocab-hit:hover {
   display: flex;
   gap: 8px;
   margin-top: 10px;
-}
-
-.review-panel {
-  max-width: 560px;
-}
-
-/* Context-first review: the original sentence is the prompt. */
-.flash-context {
-  margin: 0 0 16px;
-  font-family: var(--reader-font);
-  font-size: 1.05rem;
-  line-height: 1.7;
-}
-
-.flashcard {
-  background: var(--panel);
-  border: none;
-  border-radius: 16px;
-  padding: 28px 24px;
-  min-height: 220px;
-  box-shadow: none;
-  cursor: pointer;
-}
-
-button.flashcard {
-  display: block;
-  width: 100%;
-  text-align: left;
-  font: inherit;
-  color: inherit;
-}
-
-.flash-term {
-  font-size: 1.8rem;
-  font-weight: 700;
-  margin-bottom: 12px;
-}
-
-.flash-back {
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-}
-
-.tip {
-  margin-top: 24px;
-}
-
-.rate-row {
-  display: flex;
-  gap: 10px;
-  margin-top: 16px;
 }
 
 .settings-section {

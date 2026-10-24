@@ -1,5 +1,4 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { api, FeedCategory, FeedSource } from "../api";
 import FeedDiscoverSection, {
   type DiscoverRow,
@@ -8,11 +7,10 @@ import { categoryLabel } from "../readerUtils";
 import { useFeeds } from "../store";
 import { useToast } from "./Toaster";
 
-type AddTab = "discover" | "paste" | "article";
+type AddTab = "discover" | "paste";
 
 /** Subscription manager, embedded in the Settings page (订阅 tab). */
 export default function ManageFeeds() {
-  const navigate = useNavigate();
   const toast = useToast();
   // The sidebar already owns the feed list; subscribing, muting or deleting
   // here reloads that one copy so the tree updates without waiting for the
@@ -28,8 +26,6 @@ export default function ManageFeeds() {
   const [pasteUrl, setPasteUrl] = useState("");
   const [pasteName, setPasteName] = useState("");
   const [pasting, setPasting] = useState(false);
-  const [articleUrl, setArticleUrl] = useState("");
-  const [importingArticle, setImportingArticle] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -182,25 +178,6 @@ export default function ManageFeeds() {
     }
   }
 
-  async function onImportArticle(e: FormEvent) {
-    e.preventDefault();
-    const url = articleUrl.trim();
-    if (!url) return;
-    setImportingArticle(true);
-    setError(null);
-    try {
-      const article = await api.importArticleUrl(url);
-      setArticleUrl("");
-      // 落地阅读页本身就是反馈，不弹 toast。
-      // Same behavior as file import: land the reader on the fresh article.
-      navigate(`/article/${article.id}`);
-    } catch (err) {
-      setError(`导入失败：${String(err)}`);
-    } finally {
-      setImportingArticle(false);
-    }
-  }
-
   async function onPasteSubscribe(e: FormEvent) {
     e.preventDefault();
     const url = pasteUrl.trim();
@@ -319,13 +296,12 @@ export default function ManageFeeds() {
       </section>
 
       <details className="feeds-add-block" open>
-        <summary>添加订阅 / 导入文章</summary>
+        <summary>添加订阅</summary>
         <div className="tabs feeds-add-tabs">
           {(
             [
               ["discover", "发现新源"],
               ["paste", "粘贴 RSS"],
-              ["article", "导入文章"],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -369,25 +345,6 @@ export default function ManageFeeds() {
               disabled={pasting || !pasteUrl.trim()}
             >
               {pasting ? "订阅中…" : "订阅"}
-            </button>
-          </form>
-        )}
-
-        {addTab === "article" && (
-          <form className="feeds-paste" onSubmit={(e) => void onImportArticle(e)}>
-            <input
-              type="url"
-              value={articleUrl}
-              onChange={(e) => setArticleUrl(e.target.value)}
-              placeholder="https://example.com/some-article"
-              disabled={importingArticle}
-            />
-            <button
-              className="btn primary"
-              type="submit"
-              disabled={importingArticle || !articleUrl.trim()}
-            >
-              {importingArticle ? "导入中…" : "导入"}
             </button>
           </form>
         )}

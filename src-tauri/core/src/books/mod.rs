@@ -5,7 +5,7 @@
 //! shortcut — it is the only shape the reader can render: `Reader` maps over
 //! every paragraph of an article with no virtualization, so a 200k-word book in
 //! one row would be thousands of paragraphs of React spans. Chapters are
-//! ordinary articles, so reading, lookup, translation, SRS, stats, the sidebar
+//! ordinary articles, so reading, lookup, translation, stats, the sidebar
 //! tree and the source filter all work unchanged, and the refresh pipeline
 //! skips books (`feeds::pipeline::select_enabled_feeds`).
 //!

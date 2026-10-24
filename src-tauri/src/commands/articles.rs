@@ -1,8 +1,7 @@
 use shiyan_core::article_view;
-use shiyan_core::db::{self, Article, ArticleListItem, DbState, LearningStats, RankWindow, TranslationRow};
+use shiyan_core::db::{self, ArticleListItem, DbState, LearningStats, RankWindow, TranslationRow};
 use shiyan_core::error::AppError;
 use shiyan_core::feeds;
-use shiyan_core::import_file;
 use shiyan_core::translate;
 use shiyan_core::vocab;
 use tauri::{AppHandle, Emitter};
@@ -273,14 +272,6 @@ pub async fn fill_missing_card_zh(app: AppHandle) -> Result<usize, AppError> {
     .await
 }
 
-#[tauri::command]
-pub async fn import_article_url(app: AppHandle, url: String) -> Result<Article, AppError> {
-    crate::commands::spawn_db(app, move |state| {
-        feeds::import_article_from_url(state, &url)
-    })
-    .await
-}
-
 /// Re-fetch articles whose stored body lost paragraph breaks.
 #[tauri::command]
 pub async fn repair_paragraphs(
@@ -289,14 +280,6 @@ pub async fn repair_paragraphs(
 ) -> Result<usize, AppError> {
     crate::commands::spawn_db(app, move |state| {
         feeds::repair_missing_paragraphs(state, limit.unwrap_or(30))
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn import_article_file(app: AppHandle, path: String) -> Result<Article, AppError> {
-    crate::commands::spawn_db(app, move |state| {
-        import_file::import_article_from_file(state, &path)
     })
     .await
 }

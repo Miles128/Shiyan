@@ -1,6 +1,5 @@
 import type {
   AppConfig,
-  Article,
   ArticleListItem,
   ArticleView,
   CatalogBook,
@@ -71,8 +70,6 @@ export interface Commands {
   get_learning_stats: { args: void; ret: LearningStats };
   get_reading_stats: { args: void; ret: ReadingStats };
   fill_missing_card_zh: { args: void; ret: number };
-  import_article_url: { args: { url: string }; ret: Article };
-  import_article_file: { args: { path: string }; ret: Article };
   repair_paragraphs: { args: { limit: number | null }; ret: number };
   translate_paragraph: {
     args: { articleId: string; paragraphIndex: number; text: string };
@@ -88,7 +85,7 @@ export interface Commands {
     ret: FullTranslateResult;
   };
 
-  // ── memory / vocab / known words ─────────────────────────────────────
+  // ── memory / vocab ────────────────────────────────────────────────────
   add_memory: {
     args: {
       input: {
@@ -107,14 +104,9 @@ export interface Commands {
     args: { kind: MemoryKind; status: string | null };
     ret: MemoryItem[];
   };
-  due_memory: { args: { kind: MemoryKind }; ret: MemoryItem[] };
-  review_memory: { args: { id: string; rating: string }; ret: MemoryItem };
   set_memory_status: { args: { id: string; status: string }; ret: void };
   delete_memory: { args: { id: string }; ret: void };
   export_memory_csv: { args: void; ret: string | null };
-  list_known_words: { args: void; ret: string[] };
-  add_known_word: { args: { term: string }; ret: void };
-  remove_known_word: { args: { term: string }; ret: void };
 
   // ── feeds ─────────────────────────────────────────────────────────────
   list_feeds: { args: void; ret: FeedSource[] };

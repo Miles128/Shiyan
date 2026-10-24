@@ -25,9 +25,6 @@ type Props = {
   onAddVocab: () => void;
   /** Present for multi-word selections: save into the phrase library. */
   onAddPhrase?: () => void;
-  /** Present for single words: mark/unmark as already known. */
-  onToggleKnown?: () => void;
-  known?: boolean;
   onClose: () => void;
 };
 
@@ -77,8 +74,6 @@ export default function SelectionPopover({
   onSpeakWord,
   onAddVocab,
   onAddPhrase,
-  onToggleKnown,
-  known,
   onClose,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
@@ -240,11 +235,6 @@ export default function SelectionPopover({
         {onAddPhrase ? (
           <button className="pop-link primary" onClick={onAddPhrase}>
             加入短语
-          </button>
-        ) : null}
-        {onToggleKnown ? (
-          <button className="pop-link" onClick={onToggleKnown}>
-            {known ? "取消已认识" : "标为已认识"}
           </button>
         ) : null}
       </div>

@@ -1,6 +1,5 @@
 use super::{row_as, MemoryItem};
 use crate::error::AppError;
-use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 
 const MEMORY_SELECT: &str = "SELECT id,kind,term,definition_zh,word_type,collocations_json AS collocations,context_sentence,article_id,status,interval_days,reps,consecutive_know,next_review_at,created_at FROM memory_items";
@@ -98,40 +97,6 @@ pub fn update_memory_meta(conn: &Connection, item: &MemoryItem) -> Result<(), Ap
         ],
     )?;
     Ok(())
-}
-
-pub fn update_memory_review(conn: &Connection, item: &MemoryItem) -> Result<(), AppError> {
-    conn.execute(
-        "UPDATE memory_items SET status=?1, interval_days=?2, reps=?3, consecutive_know=?4, next_review_at=?5 WHERE id=?6",
-        params![
-            item.status,
-            item.interval_days,
-            item.reps,
-            item.consecutive_know,
-            item.next_review_at,
-            item.id
-        ],
-    )?;
-    Ok(())
-}
-
-/// Items due for review (oldest due first), optionally scoped to one library.
-pub fn due_memory(conn: &Connection, kind: Option<&str>) -> Result<Vec<MemoryItem>, AppError> {
-    let now = Utc::now().to_rfc3339();
-    let mut sql = format!(
-        "{MEMORY_SELECT} WHERE status='learning' AND next_review_at<=?1"
-    );
-    let mut values: Vec<rusqlite::types::Value> = vec![now.into()];
-    if let Some(k) = kind.filter(|k| !k.is_empty()) {
-        sql.push_str(" AND kind=?2");
-        values.push(k.to_string().into());
-    }
-    sql.push_str(" ORDER BY next_review_at ASC LIMIT 50");
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt
-        .query_map(rusqlite::params_from_iter(values.iter()), row_as::<MemoryItem>)?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
 }
 
 /// Statuses the UI can move a row between. Anything else would silently

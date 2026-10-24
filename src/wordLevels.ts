@@ -618,7 +618,6 @@ export function annotateText(
   text: string,
   prefs: DifficultyPrefs,
   learningTerms: string[],
-  knownTerms: string[] = [],
 ): AnnotatedSpan[] {
   const toks: { raw: string; isWord: boolean }[] = [];
   TOKEN_RE.lastIndex = 0;
@@ -630,19 +629,11 @@ export function annotateText(
 
   const learning = new Set<string>();
   const learningLemmas = new Set<string>();
-  const known = new Set<string>();
-  const knownLemmas = new Set<string>();
   for (const t of learningTerms) {
     const nk = normalizeKey(t);
     if (nk.length < 2) continue;
     learning.add(nk);
     if (nk.includes(" ")) learningLemmas.add(lemmaPhraseKey(nk));
-  }
-  for (const t of knownTerms) {
-    const nk = normalizeKey(t);
-    if (nk.length < 2) continue;
-    known.add(nk);
-    if (nk.includes(" ")) knownLemmas.add(lemmaPhraseKey(nk));
   }
 
   const spans: AnnotatedSpan[] = [];
@@ -655,17 +646,15 @@ export function annotateText(
       continue;
     }
 
-    const hit = matchChunkAt(toks, i, learningLemmas, knownLemmas);
+    const hit = matchChunkAt(toks, i, learningLemmas);
     if (hit) {
-      const knownHit = known.has(hit.rawKey) || knownLemmas.has(hit.lemmaKey);
       const learningHit =
-        !knownHit &&
-        (learning.has(hit.rawKey) || learningLemmas.has(hit.lemmaKey));
+        learning.has(hit.rawKey) || learningLemmas.has(hit.lemmaKey);
       spans.push({
         type: "token",
         text: joinToks(toks, i, hit.count),
         term: hit.entry?.key ?? hit.rawKey,
-        hard: !knownHit,
+        hard: true,
         superHard: false,
         learning: learningHit,
         zh: hit.entry?.zh,
@@ -680,18 +669,21 @@ export function annotateText(
     const phrase = matchLexiconPhraseAt(toks, i);
     if (phrase) {
       const headword = phrase.entry.term ?? phrase.key;
-      const knownHit = known.has(phrase.key) || known.has(headword);
       const proper = isProperNounSurface(t.raw, isSentenceInitial(toks, i));
+      const hard = isHardWord(phrase.entry, prefs);
       spans.push({
         type: "token",
         text: joinToks(toks, i, phrase.count),
         term: headword,
-        hard: !knownHit && isHardWord(phrase.entry, prefs),
-        superHard: !knownHit && !proper && isSuperHardWord(phrase.entry, prefs),
+        hard,
+        superHard: !proper && isSuperHardWord(phrase.entry, prefs),
         learning:
-          !knownHit &&
-          (learning.has(phrase.key) || learning.has(headword)),
-        zh: proper ? properNounGloss(phrase.entry) : phrase.entry.zh,
+          learning.has(phrase.key) || learning.has(headword),
+        zh: proper
+          ? isHardWord(phrase.entry, prefs)
+            ? properNounGloss(phrase.entry)
+            : undefined
+          : phrase.entry.zh,
         kind: "word",
         proper,
       });
@@ -702,34 +694,37 @@ export function annotateText(
     const key = normalizeKey(t.raw);
     const entry = lookupWord(key);
     const lemmaKey = findLemmaKey(key);
-    const knownHit = known.has(key) || known.has(lemmaKey);
     // Three surface classes, because a lowercase key alone cannot tell them
     // apart: an honorific (`Ms` → 女士, never 美国微软公司), a proper noun
     // (`Trump`, glossed only from its name reading), or an ordinary word.
     const honorific = isHonorific(t.raw);
     const proper = !honorific && isProperNounSurface(t.raw, isSentenceInitial(toks, i));
-    const hard = !knownHit
-      ? entry
-        ? isHardWord(entry, prefs)
-        : !proper && isOutOfLexiconHard(t.raw)
-      : false;
+    const hard = entry
+      ? isHardWord(entry, prefs)
+      : !proper && isOutOfLexiconHard(t.raw);
     spans.push({
       type: "token",
       text: t.raw,
       term: lemmaKey || key,
       // A name is not a vocabulary gap: `Nvidia`/`Zelensky` stay clickable but
       // are neither underlined nor glossed. A name the lexicon *does* tag as
-      // one (普京（人名）) keeps its gloss so the annotation stays useful.
-      // An honorific is conventional text, so it is never difficulty either.
+      // one (普京（人名）) keeps its gloss only when the word is above the
+      // learner — an in-level word (`Better`, `London`) is not marked, capital
+      // or not. An honorific is conventional text, so it is never difficulty.
       hard: honorific ? false : hard,
       superHard:
-        !knownHit &&
         !proper &&
         !honorific &&
         !!entry &&
         isSuperHardWord(entry, prefs),
-      learning: !knownHit && (learning.has(key) || learning.has(lemmaKey)),
-      zh: honorific ? honorificGloss(entry) : proper ? properNounGloss(entry) : entry?.zh,
+      learning: learning.has(key) || learning.has(lemmaKey),
+      zh: honorific
+        ? honorificGloss(entry)
+        : proper
+          ? entry && isHardWord(entry, prefs)
+            ? properNounGloss(entry)
+            : undefined
+          : entry?.zh,
       kind: "word",
       proper,
     });
@@ -898,18 +893,13 @@ function matchChunkAt(
   toks: { raw: string; isWord: boolean }[],
   start: number,
   learningLemmas: Set<string>,
-  knownLemmas: Set<string>,
 ): {
   count: number;
   entry: ChunkEntry | null;
   lemmaKey: string;
   rawKey: string;
 } | null {
-  if (
-    chunksByLemma.size === 0 &&
-    learningLemmas.size === 0 &&
-    knownLemmas.size === 0
-  ) {
+  if (chunksByLemma.size === 0 && learningLemmas.size === 0) {
     return null;
   }
   const words = wordWindow(toks, start, MAX_CHUNK_TOKENS);
@@ -922,7 +912,7 @@ function matchChunkAt(
       continue;
     }
     const entry = chunksByLemma.get(lemmaKey);
-    if (entry || learningLemmas.has(lemmaKey) || knownLemmas.has(lemmaKey)) {
+    if (entry || learningLemmas.has(lemmaKey)) {
       return {
         count: words[n - 1]! + 1 - start,
         entry: entry ?? null,

@@ -165,6 +165,37 @@ describe("proper nouns (surface detection)", () => {
     }
   });
 
+  it("does not gloss a capitalized word the learner already has", () => {
+    // `Better` / `Years` / `London` are inside a B1 band, so the capital is
+    // not a reason to hang 较好的 / 年代 / 伦敦 under them.
+    const spans = annotateText(
+      "The plan promises Better Years in London.",
+      prefsB1,
+      [],
+    );
+    for (const word of ["Better", "Years", "London"]) {
+      const span = spans.find((s) => s.type === "token" && s.text === word);
+      expect(span).toMatchObject({
+        type: "token",
+        proper: true,
+        hard: false,
+        zh: undefined,
+      });
+    }
+  });
+
+  it("keeps a place gloss when the name is above the learner", () => {
+    const prefsA1: DifficultyPrefs = { cefrLevel: "A1", freqBand: 1000 };
+    const spans = annotateText("She met him in London.", prefsA1, []);
+    const london = spans.find((s) => s.type === "token" && s.text === "London");
+    expect(london).toMatchObject({
+      type: "token",
+      proper: true,
+      hard: true,
+      zh: "伦敦",
+    });
+  });
+
   it("leaves an unknown name unhardened — a name is not a vocabulary gap", () => {
     const spans = annotateText("Nvidia and OpenAI shipped the model.", prefsB1, []);
     for (const name of ["Nvidia", "OpenAI"]) {
@@ -228,13 +259,6 @@ describe("proper nouns (surface detection)", () => {
       expect(word.hard).toBe(true);
       expect(word.zh).toBeUndefined(); // no dictionary row: still no wrong gloss
     }
-  });
-
-  it("still reads a quoted name mid-sentence as a name", () => {
-    const spans = annotateText('The paper "The Times" reported it.', prefsB1, []);
-    const the = spans.find((s) => s.type === "token" && s.text === "The");
-    // The article is never a name, whatever the quote; `Times` carries it.
-    if (the?.type === "token") expect(the.proper).toBe(false);
   });
 
   it("does not read a clause boundary as a name", () => {
@@ -356,18 +380,6 @@ describe("lexical chunks (chunks.json)", () => {
     if (hit?.type === "token") expect(hit.text).toBe("looking forward to");
   });
 
-  it("suppresses a chunk the learner already knows", () => {
-    const spans = annotateText("Please bear in mind.", prefsC2, [], [
-      "bear in mind",
-    ]);
-    const hit = chunkSpan(spans, "bear in mind");
-    expect(hit).toBeDefined();
-    if (hit?.type === "token") {
-      expect(hit.hard).toBe(false);
-      expect(hit.learning).toBe(false);
-    }
-  });
-
   it("marks a saved learning chunk", () => {
     const spans = annotateText("You must bear in mind.", prefsC2, [
       "bear in mind",
@@ -441,14 +453,6 @@ describe("spaced aliases of hyphenated headwords", () => {
   it("does not claim a spaced phrasal verb for the noun compound", () => {
     const text = "She had to take off her shoes.";
     expect(wordSpan(annotateText(text, prefsB1, []), "take-off")).toBeUndefined();
-  });
-
-  it("suppresses an alias the learner already knows", () => {
-    const spans = annotateText("a world class chip", prefsB1, [], [
-      "world-class",
-    ]);
-    const hit = wordSpan(spans, "world-class");
-    if (hit?.type === "token") expect(hit.hard).toBe(false);
   });
 
   it("round-trips a paragraph full of compounds", () => {

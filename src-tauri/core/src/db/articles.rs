@@ -372,12 +372,6 @@ fn build_stats(
     let phrases_learning = by_status("phrase", "learning")?;
     let phrases_mastered = by_status("phrase", "mastered")?;
 
-    let due_since = chrono::Utc::now().to_rfc3339();
-    let due_today = scalar(
-        "SELECT COUNT(*) FROM memory_items WHERE status='learning' AND next_review_at <= ?1",
-        &[&due_since],
-    )?;
-
     let top_sources = {
         let mut stmt = conn
             .prepare(&format!(
@@ -414,7 +408,6 @@ fn build_stats(
         vocab_mastered,
         phrases_learning,
         phrases_mastered,
-        due_today,
         top_sources,
     })
 }

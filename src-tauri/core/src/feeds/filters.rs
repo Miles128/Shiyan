@@ -8,9 +8,8 @@ use std::sync::LazyLock;
 /// Shorter bodies are teasers/summaries — page fetch must succeed or the entry is skipped.
 pub(crate) const TRUST_RSS_FULLTEXT_CHARS: usize = 2000;
 
-/// Floor for a body a learner chose by hand (import by URL, or a local
-/// file). Deliberately lower than [`MIN_ARTICLE_WORDS`]: a 90-word post they
-/// pointed at is still theirs to read, while auto-ingest needs substance.
+/// Fixture length used by the gate tests: comfortably above every body bar.
+#[cfg(test)]
 pub(crate) const MIN_IMPORTED_BODY_CHARS: usize = 400;
 
 static RE_TAG_STRIP: LazyLock<regex::Regex> =

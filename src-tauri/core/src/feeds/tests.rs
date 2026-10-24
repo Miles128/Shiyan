@@ -532,15 +532,6 @@ fn partition_skips_known() {
 }
 
 #[test]
-fn source_strips_www() {
-    assert_eq!(
-        source_from_url("https://www.theguardian.com/world/example"),
-        "theguardian.com"
-    );
-    assert_eq!(source_from_url("not-a-url"), "导入");
-}
-
-#[test]
 fn title_parses_html_title() {
     let html = "<html><head><title>  Hello World  | Site </title></head></html>";
     assert_eq!(title_from_html(html).as_deref(), Some("Hello World"));

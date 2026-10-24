@@ -28,9 +28,6 @@ export const apiMemory = {
     }),
   listMemory: (kind: MemoryKind, status?: string) =>
     typedInvoke("list_memory", { kind, status: status ?? null }),
-  dueMemory: (kind: MemoryKind) => typedInvoke("due_memory", { kind }),
-  reviewMemory: (id: string, rating: string) =>
-    typedInvoke("review_memory", { id, rating }),
   setMemoryStatus: (id: string, status: string) =>
     typedInvoke("set_memory_status", { id, status }),
   deleteMemory: (id: string) => typedInvoke("delete_memory", { id }),
@@ -38,9 +35,4 @@ export const apiMemory = {
   // Export the whole vocab library (words + phrases) as CSV; returns the
   // written path, or null when the save dialog was cancelled.
   exportVocabCsv: () => typedInvoke("export_memory_csv"),
-
-  // Known words: marked as already known, so they stop being highlighted.
-  listKnownWords: () => typedInvoke("list_known_words"),
-  addKnownWord: (term: string) => typedInvoke("add_known_word", { term }),
-  removeKnownWord: (term: string) => typedInvoke("remove_known_word", { term }),
 };

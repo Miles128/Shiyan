@@ -13,4 +13,4 @@ days: Array<ReadingDay>,
 /**
  * Consecutive days ending today/yesterday with at least one article opened.
  */
-streak_days: number, articles_total: number, articles_7d: number, completed_total: number, liked_total: number, minutes_total: number, minutes_7d: number, words_total: number, vocab_learning: number, vocab_mastered: number, phrases_learning: number, phrases_mastered: number, due_today: number, top_sources: Array<SourceStat>, };
+streak_days: number, articles_total: number, articles_7d: number, completed_total: number, liked_total: number, minutes_total: number, minutes_7d: number, words_total: number, vocab_learning: number, vocab_mastered: number, phrases_learning: number, phrases_mastered: number, top_sources: Array<SourceStat>, };

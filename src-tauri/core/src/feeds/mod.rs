@@ -8,7 +8,6 @@
 //! - [`pipeline`] — the parallel refresh flow (`refresh_feeds`)
 //! - [`cleanup`] — one-time audits, retention purges, body repair
 //! - [`enrich`] — LLM backfill of summaries
-//! - [`import`] — import-a-single-article-by-URL path
 //!
 //! All public items are re-exported here so call sites keep using
 //! `crate::feeds::…` unchanged.
@@ -18,7 +17,6 @@ pub mod dedup;
 pub mod enrich;
 pub mod extract;
 pub mod filters;
-pub mod import;
 pub mod net;
 pub mod pipeline;
 
@@ -30,10 +28,9 @@ pub mod pipeline;
 pub use cleanup::{
     clear_stale_paragraph_translations_once, purge_blocked_articles, repair_missing_paragraphs,
 };
-pub(crate) use enrich::fill_article_card_zh;
 pub use enrich::{fill_missing_card_zh, CARDS_PER_REFRESH};
-pub(crate) use filters::{is_english_article, MIN_IMPORTED_BODY_CHARS};
-pub use import::import_article_from_url;
+#[cfg(test)]
+pub(crate) use filters::is_english_article;
 pub use net::{validate_feed_url, FeedValidation};
 pub use pipeline::{refresh_feeds, request_refresh_cancel, RefreshProgress, RefreshResult};
 
@@ -54,8 +51,6 @@ pub(crate) use extract::{html_to_text, title_from_html};
 #[cfg(test)]
 pub(crate) use filters::is_summary_only_body;
 #[cfg(test)]
-pub(crate) use import::source_from_url;
-#[cfg(test)]
 pub(crate) use net::ensure_public_http_url;
 #[cfg(test)]
 pub(crate) use pipeline::select_enabled_feeds;
@@ -63,8 +58,6 @@ pub(crate) use pipeline::select_enabled_feeds;
 /// The one auto-ingest length bar, in words: a real learning session needs
 /// substance, not a blurb. Every gate that decides whether a fetched body
 /// becomes a library entry uses this ([`filters::is_readable_article_body`]).
-/// User imports have their own, lower floor — see
-/// [`filters::MIN_IMPORTED_BODY_CHARS`].
 pub(crate) const MIN_ARTICLE_WORDS: usize = 400;
 
 pub fn split_paragraphs(text: &str) -> Vec<String> {

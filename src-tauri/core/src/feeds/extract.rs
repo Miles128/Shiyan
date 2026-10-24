@@ -12,6 +12,7 @@ static RE_TRAILING_WS: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"[ \t]+\n").unwrap());
 static RE_BLANK_RUN: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"\n{3,}").unwrap());
+#[cfg(test)]
 static RE_HTML_TITLE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"(?is)<title[^>]*>(.*?)</title>").unwrap());
 
@@ -23,6 +24,7 @@ pub(crate) fn html_to_text(html: &str) -> String {
     s.trim().to_string()
 }
 
+#[cfg(test)]
 pub(crate) fn title_from_html(html: &str) -> Option<String> {
     let caps = RE_HTML_TITLE.captures(html)?;
     let raw = caps.get(1)?.as_str();
@@ -45,7 +47,6 @@ pub(crate) fn title_from_html(html: &str) -> Option<String> {
 }
 
 pub(crate) struct ExtractedPage {
-    pub title: String,
     pub text: String,
 }
 
@@ -69,7 +70,7 @@ fn fail(detail: impl Into<String>) -> PageExtractError {
     }
 }
 
-/// Fetch a public article URL and extract title + main text (no paywall bypass),
+/// Fetch a public article URL and extract the main text (no paywall bypass),
 /// reporting *why* a page was unusable.
 pub(crate) fn extract_page(
     client: &Client,
@@ -95,8 +96,6 @@ pub(crate) fn extract_page(
         return Err(fail("疑似付费墙，已跳过"));
     }
 
-    let mut title = title_from_html(&html).unwrap_or_default();
-
     // Prefer readability extraction; fall back to html2text.
     let from_readability = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut cursor = std::io::Cursor::new(html.as_bytes());
@@ -104,13 +103,11 @@ pub(crate) fn extract_page(
             // readability's `text` is a single blob that loses paragraph
             // breaks; the cleaned HTML keeps them, so prefer it.
             let from_html = html_to_text(&p.content);
-            let text = if from_html.is_empty() {
+            if from_html.is_empty() {
                 p.text.trim().to_string()
             } else {
                 from_html
-            };
-            let page_title = p.title.trim().to_string();
-            (page_title, text)
+            }
         })
     }))
     .ok()
@@ -118,12 +115,7 @@ pub(crate) fn extract_page(
 
     let full_page = crate::reflow::clean_body(&html_to_text(&html));
     let text = match from_readability {
-        Some((page_title, extracted)) => {
-            if title.is_empty() && !page_title.is_empty() {
-                title = page_title;
-            }
-            pick_body(crate::reflow::clean_body(&extracted), full_page)
-        }
+        Some(extracted) => pick_body(crate::reflow::clean_body(&extracted), full_page),
         None => full_page,
     };
 
@@ -131,11 +123,7 @@ pub(crate) fn extract_page(
         return Err(fail(format!("未能抽到可用正文：{}", defect.label())));
     }
 
-    if title.is_empty() {
-        title = "Untitled".into();
-    }
-
-    Ok(ExtractedPage { title, text })
+    Ok(ExtractedPage { text })
 }
 
 /// readability's output is the article proper, so it is the body we want — but

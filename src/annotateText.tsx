@@ -32,14 +32,12 @@ export const AnnotatedPara = memo(function AnnotatedPara({
   text,
   prefs,
   learningTerms,
-  knownTerms,
   onHardClick,
   showGloss = false,
 }: {
   text: string;
   prefs: DifficultyPrefs;
   learningTerms: string[];
-  knownTerms?: string[];
   onHardClick?: HardWordClick;
   showGloss?: boolean;
 }): ReactNode {
@@ -47,8 +45,8 @@ export const AnnotatedPara = memo(function AnnotatedPara({
   // translation toggles) re-render this memo only when props change, and even
   // then identical text+prefs+vocab hits the memoized spans.
   const spans = useMemo(
-    () => annotateText(text, prefs, learningTerms, knownTerms),
-    [text, prefs, learningTerms, knownTerms],
+    () => annotateText(text, prefs, learningTerms),
+    [text, prefs, learningTerms],
   );
   const rendered = useMemo(
     () => spans.map((s, i) => renderSpan(s, i, onHardClick, showGloss)),
@@ -139,8 +137,8 @@ function renderSpan(
         );
 
 // 词块始终挂淡色中文（chunks 是学习核心目标）；单词只在「超级难词 + 词典有中文 + 用户开了开关」时挂。
-// 专有名词例外：`proper` 的 span 只带词典确认的专名释义（普京（人名）、布鲁塞尔），
-// 普通词义已被 properNounGloss 剔除，所以这里不会出现 Trump→王牌 这类错义。
+// 专有名词例外：超出当前难度、且词典确认了专名释义时才挂（普京（人名）、布鲁塞尔）。
+// 简单词即使首字母大写也不带中文（Better、London）；多义普通词义已被 properNounGloss 剔除。
 // 点词/键盘 Enter 仍走原 LLM 上下文翻译路径，不受这里影响。
 // 释义挂在词/短语正下方（绝对定位，只占行距留白），所以开启时行高有下限。
 const wantsGloss =

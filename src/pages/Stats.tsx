@@ -1,4 +1,3 @@
-import { Link } from "react-router-dom";
 import { api } from "../api";
 import { useQuery } from "../query";
 import PageBack from "../components/PageBack";
@@ -155,12 +154,6 @@ export default function Stats() {
           <div className="stat-card">
             <span className="stat-value">{stats.phrases_mastered}</span>
             <span className="stat-label">短语已掌握</span>
-          </div>
-          <div className="stat-card">
-            <span className="stat-value">{stats.due_today}</span>
-            <span className="stat-label">
-              今日待复习 · <Link to="/vocab">去复习</Link>
-            </span>
           </div>
         </div>
       </section>

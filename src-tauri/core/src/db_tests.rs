@@ -394,13 +394,13 @@ fn purge_summary_only_removes_teasers_keeps_fulltext() {
 }
 
 #[test]
-fn purge_never_touches_user_imported_articles() {
+fn purge_never_touches_book_chapters() {
     let tmp = TmpDb::new("purge-import");
     let conn = tmp.conn();
 
     for (id, url, origin) in [
-        ("u1", "https://example.com/url-import", "url"),
-        ("f1", "file://import/xyz", "file"),
+        ("b1", "https://www.gutenberg.org/ebooks/1", "book"),
+        ("b2", "https://www.gutenberg.org/ebooks/2", "book"),
     ] {
         let a = db::Article {
             id: id.into(),
@@ -480,7 +480,7 @@ fn purge_word_threshold_drops_short_rss_keeps_imports() {
     unknown.word_count = 0;
     let mut imported_short = sample_article("imported");
     imported_short.word_count = 50;
-    imported_short.origin = "file".into();
+    imported_short.origin = "book".into();
 
     for a in [&short, &long, &unknown, &imported_short] {
         db::insert_article_if_new(&conn, a).unwrap();
@@ -496,7 +496,7 @@ fn purge_word_threshold_drops_short_rss_keeps_imports() {
     );
     assert!(
         db::get_article(&conn, "imported").unwrap().is_some(),
-        "user imports are never deleted by threshold purges"
+        "book chapters are never deleted by threshold purges"
     );
 
 }
@@ -605,7 +605,7 @@ fn body_replacement_invalidates_paragraph_translations() {
 }
 
 #[test]
-fn refresh_article_content_skips_url_imports() {
+fn refresh_article_content_skips_book_chapters() {
     let tmp = TmpDb::new("refresh-url");
     let conn = tmp.conn();
     let original = "imported body ".repeat(40);
@@ -618,7 +618,7 @@ fn refresh_article_content_skips_url_imports() {
         published_at: None,
         content_text: original.clone(),
         fetched_at: "2020-01-01T00:00:00Z".into(),
-        origin: "url".into(),
+        origin: "book".into(),
         summary_zh: String::new(),
         last_opened_at: None,
         open_count: 0,
@@ -646,7 +646,7 @@ fn refresh_article_content_skips_url_imports() {
     let stored = db::get_article(&conn, "imp1").unwrap().expect("exists");
     assert_eq!(stored.title, "Imported");
     assert_eq!(stored.content_text, original);
-    assert_eq!(stored.origin, "url");
+    assert_eq!(stored.origin, "book");
 
 }
 
@@ -968,7 +968,7 @@ fn retention_purge_drops_old_rss_but_keeps_liked_and_imports() {
     old_liked.liked = true;
     let mut old_import = sample_article("old-import");
     old_import.published_at = Some(old.clone());
-    old_import.origin = "url".into();
+    old_import.origin = "book".into();
     let mut new_rss = sample_article("new-rss");
     new_rss.published_at = Some(recent);
 
@@ -1010,7 +1010,7 @@ fn sample_phrase(id: &str, text: &str) -> db::MemoryItem {
 }
 
 #[test]
-fn phrase_library_dedup_review_and_listing() {
+fn phrase_library_dedup_and_listing() {
     let tmp = TmpDb::new("phrases");
     let conn = tmp.conn();
 
@@ -1022,18 +1022,6 @@ fn phrase_library_dedup_review_and_listing() {
     // Case-insensitive unique index blocks a differently-cased duplicate.
     let dup = db::insert_memory(&conn, &sample_phrase("p2", "ON THE HOUSE"));
     assert!(dup.is_err(), "duplicate phrase must be rejected");
-
-    // Due immediately (next_review_at in the past), listed once.
-    let due = db::due_memory(&conn, Some("phrase")).unwrap();
-    assert_eq!(due.len(), 1);
-    assert_eq!(due[0].term, "on the house");
-
-    // SRS: easy schedule pushes it out of the due list.
-    let mut item = db::get_memory(&conn, "p1").unwrap().unwrap();
-    crate::srs::apply_rating(&mut item, crate::srs::Rating::Easy);
-    assert_eq!(item.interval_days, 1.0);
-    db::update_memory_review(&conn, &item).unwrap();
-    assert!(db::due_memory(&conn, Some("phrase")).unwrap().is_empty());
 
     // Status transitions + delete.
     db::set_memory_status(&conn, "p1", "mastered").unwrap();
@@ -1416,42 +1404,6 @@ fn add_or_merge_memory_reuses_existing_term() {
 }
 
 #[test]
-fn add_or_merge_memory_preserves_srs_progress() {
-    let tmp = TmpDb::new("vocab-srs");
-    let state = tmp.state();
-    let input = |ctx: &str| crate::vocab::AddMemoryInput {
-        kind: "word".into(),
-        term: "persevere".into(),
-        context_sentence: ctx.into(),
-        article_id: None,
-        definition_zh: Some("坚持".into()),
-        word_type: Some("verb".into()),
-        collocations: Some(vec![]),
-    };
-    let first = crate::vocab::add_or_merge_memory(&state, input("Keep going.")).unwrap();
-
-    // Simulate two successful reviews.
-    {
-        let conn = state.lock_write().unwrap();
-        let mut item = db::get_memory_by_term(&conn, "word", "persevere")
-            .unwrap()
-            .expect("exists");
-        item.reps = 2;
-        item.consecutive_know = 2;
-        item.interval_days = 3.0;
-        db::update_memory_review(&conn, &item).unwrap();
-    }
-
-    // Re-adding the same word merges metadata but never resets SRS state.
-    let merged = crate::vocab::add_or_merge_memory(&state, input("Still going.")).unwrap();
-    assert_eq!(merged.id, first.id);
-    assert_eq!(merged.reps, 2);
-    assert_eq!(merged.consecutive_know, 2);
-    assert_eq!(merged.interval_days, 3.0);
-    assert_eq!(merged.status, "learning");
-}
-
-#[test]
 fn add_or_merge_memory_unifies_word_and_phrase_kinds() {
     let tmp = TmpDb::new("memory-kinds");
     let state = tmp.state();
@@ -1471,69 +1423,6 @@ fn add_or_merge_memory_unifies_word_and_phrase_kinds() {
     assert_eq!(phrase.kind, "phrase");
     assert_eq!(phrase.term, "on the house", "whitespace normalized");
     assert_eq!(phrase.definition_zh, "本店请客");
-}
-
-#[test]
-fn known_words_add_list_remove_roundtrip() {
-    let tmp = TmpDb::new("known");
-    let conn = tmp.conn();
-
-    // Insert normalizes case/whitespace; a differently-cased re-add is ignored.
-    db::add_known_word(&conn, "  Serendipity ").unwrap();
-    db::add_known_word(&conn, "serendipity").unwrap();
-    // Empty / whitespace-only terms are silently ignored.
-    db::add_known_word(&conn, "   ").unwrap();
-
-    let words = db::list_known_words(&conn).unwrap();
-    assert_eq!(words, vec!["serendipity".to_string()]);
-
-    db::add_known_word(&conn, "Ubiquitous").unwrap();
-    let words = db::list_known_words(&conn).unwrap();
-    assert_eq!(words.len(), 2, "sorted list keeps both terms");
-
-    db::remove_known_word(&conn, " SERENDIPITY ").unwrap();
-    let words = db::list_known_words(&conn).unwrap();
-    assert_eq!(words, vec!["ubiquitous".to_string()]);
-
-    // Removing a missing term is a no-op, not an error.
-    db::remove_known_word(&conn, "ghost").unwrap();
-
-}
-
-#[test]
-fn known_words_normalize_apostrophes_and_legacy_rows() {
-    let tmp = TmpDb::new("known-norm");
-    let conn = tmp.conn();
-
-    // Curly apostrophes fold to straight ones on write.
-    db::add_known_word(&conn, "it’s").unwrap();
-    db::add_known_word(&conn, "it's").unwrap();
-    assert_eq!(db::list_known_words(&conn).unwrap(), vec!["it's".to_string()]);
-    db::remove_known_word(&conn, "IT’S").unwrap();
-    assert!(db::list_known_words(&conn).unwrap().is_empty());
-
-    // Legacy rows written before normalization are canonicalized once,
-    // with collisions collapsed ('don’t' and 'DON’T' fold to one row,
-    // while plain 'dont' is a different word and stays).
-    conn.execute(
-        "INSERT INTO known_words (term, created_at) VALUES ('don’t', 'x'), ('DON’T', 'x'), ('dont', 'x')",
-        [],
-    )
-    .unwrap();
-    let fixed = db::normalize_known_words_once(&conn).unwrap();
-    assert_eq!(fixed, 2, "both non-canonical rows are rewritten");
-    assert_eq!(
-        db::list_known_words(&conn).unwrap(),
-        vec!["don't".to_string(), "dont".to_string()]
-    );
-    // Second run is a no-op even with fresh legacy-shaped rows.
-    conn.execute(
-        "INSERT INTO known_words (term, created_at) VALUES ('can’t', 'x')",
-        [],
-    )
-    .unwrap();
-    assert_eq!(db::normalize_known_words_once(&conn).unwrap(), 0);
-
 }
 
 #[test]
@@ -1601,9 +1490,9 @@ fn repair_target_selection_and_body_replacement() {
     // Not a target: body already has paragraph breaks.
     let mut healthy = sample_article("healthy");
     healthy.content_text = "First paragraph.\n\nSecond paragraph.".into();
-    // Not a target: user import (origin != rss), even with a flat body.
+    // Not a target: book chapter (origin != rss), even with a flat body.
     let mut imported = sample_article("imported");
-    imported.origin = "url".into();
+    imported.origin = "book".into();
     imported.content_text = "another flat body ".repeat(30);
 
     for a in [&flat, &healthy, &imported] {
