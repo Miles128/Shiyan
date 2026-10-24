@@ -24,8 +24,8 @@
     serif;
 }
 
-/* Explicit theme (data-theme set by src/theme.ts), plus a system fallback
-   for the first paint before JS runs. */
+/* Explicit theme: index.html sets data-theme pre-paint from the system
+   scheme; src/theme.ts overwrites it once the user preference loads. */
 :root[data-theme="dark"] {
     color-scheme: dark;
     --bg: #16181a;
@@ -46,30 +46,6 @@
     --glow-b: rgba(140, 108, 74, 0.14);
     --progress-a: #2f8f77;
     --progress-b: #45ab90;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    color-scheme: dark;
-    --bg: #16181a;
-    --panel: #1f2226;
-    --ink: #e9e6e0;
-    --muted: #9aa1a8;
-    --line: #2f353b;
-    --accent: #6fbfa8;
-    --accent-soft: #22352f;
-    --danger: #e08a8a;
-    --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
-    --bar-bg: rgba(22, 24, 26, 0.72);
-    --panel-strong: rgba(22, 24, 26, 0.94);
-    --scrim: rgba(255, 255, 255, 0.04);
-    --card: #1f2226;
-    --hover-fill: #24282d;
-    --glow-a: rgba(120, 100, 70, 0.16);
-    --glow-b: rgba(140, 108, 74, 0.14);
-    --progress-a: #2f8f77;
-    --progress-b: #45ab90;
-  }
 }
 
 * {
@@ -985,12 +961,6 @@ a.brand-mini:hover {
 
 :root[data-theme="dark"] .banner.err {
   background: #3a2323;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .banner.err {
-    background: #3a2323;
-  }
 }
 
 .banner.with-action {

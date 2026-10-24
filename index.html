@@ -5,6 +5,16 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>拾言</title>
+    <script>
+      // Pre-paint theme: mirror the system scheme before any module runs, so
+      // the stylesheet only needs one [data-theme="dark"] block. src/theme.ts
+      // overwrites this once the user preference loads.
+      document.documentElement.dataset.theme = matchMedia(
+        "(prefers-color-scheme: dark)",
+      ).matches
+        ? "dark"
+        : "light";
+    </script>
   </head>
   <body>
     <div id="root"></div>
