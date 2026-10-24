@@ -156,6 +156,10 @@ export default function Sidebar({ collapsed, onExpand }: Props) {
     () => groupSidebarFeeds(feeds, cats, counts),
     [feeds, cats, counts],
   );
+  // Books are sources too, but a different workflow: keep them in their own
+  // section instead of mixing them into the RSS tree.
+  const rssGroups = grouped.filter((g) => g.cat !== "book");
+  const bookGroups = grouped.filter((g) => g.cat === "book");
 
   function commitMove(cat: string, from: number, to: number) {
     const group = grouped.find((g) => g.cat === cat);
@@ -291,7 +295,7 @@ export default function Sidebar({ collapsed, onExpand }: Props) {
       />
       <div className="sidebar-header">
         <span className="sidebar-wordmark" data-tauri-drag-region>
-          订阅
+          阅读
         </span>
       </div>
 
@@ -307,7 +311,7 @@ export default function Sidebar({ collapsed, onExpand }: Props) {
           </button>
         </div>
 
-        {grouped.map((g) => (
+        {rssGroups.map((g) => (
           <div key={g.cat} className="tree-node">
             <button
               type="button"
@@ -349,6 +353,54 @@ export default function Sidebar({ collapsed, onExpand }: Props) {
           </div>
         ))}
 
+        {bookGroups.length > 0 && (
+          <>
+            <div className="sidebar-divider" role="separator" />
+            {bookGroups.map((g) => (
+              <div key={g.cat} className="tree-node">
+                <button
+                  type="button"
+                  className="tree-branch"
+                  onClick={() => toggle(g.cat)}
+                  aria-expanded={open[g.cat] !== false}
+                >
+                  <span className="tree-sign">{open[g.cat] !== false ? "−" : "+"}</span>
+                  <span className="tree-label">{g.label}</span>
+                </button>
+                {open[g.cat] !== false && (
+                  <div className="tree-children">
+                    {g.feeds.map((f, index) => (
+                      <div
+                        key={f.id}
+                        className={
+                          "tree-leaf" +
+                          (focusSource === f.name ? " active" : "")
+                        }
+                        onClick={() => {
+                          if (didDrag.current) {
+                            didDrag.current = false;
+                            return;
+                          }
+                          setFocusSource(focusSource === f.name ? null : f.name);
+                        }}
+                        onPointerDown={(e) => beginSort(e, g.cat, index)}
+                      >
+                        <span
+                          className="source-dot"
+                          style={{ background: dotColor(f.category) }}
+                        />
+                        <span className="source-name" title={f.name}>
+                          {f.name}
+                        </span>
+                        <span className="source-count">{f.articleCount}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </>
+        )}
       </div>
     </aside>
   );

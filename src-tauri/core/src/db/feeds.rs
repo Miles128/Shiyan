@@ -311,9 +311,9 @@ pub fn delete_user_feed(conn: &Connection, id: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Test helper: create a legacy book feed row (`kind='book'`). Book import is
-/// gone, but existing libraries still carry these rows.
-#[cfg(test)]
+/// Create (or re-enable) a book feed. One book = one feed row, kind='book':
+/// the sidebar tree, the source filter and the article list all work unchanged,
+/// while the refresh pipeline skips it (a book never produces new articles).
 pub fn insert_book_feed(
     conn: &Connection,
     name: &str,

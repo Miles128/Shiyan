@@ -2,10 +2,13 @@ import type {
   AppConfig,
   ArticleListItem,
   ArticleView,
+  CatalogBook,
+  CatalogStatus,
   FeedCategory,
   FeedSource,
   FeedValidation,
   FullTranslateResult,
+  ImportedBook,
   LearningStats,
   MemoryItem,
   RankWindow,
@@ -125,6 +128,14 @@ export interface Commands {
   };
   refresh_feeds: { args: void; ret: RefreshResult };
   cancel_refresh: { args: void; ret: void };
+
+  // ── books (Project Gutenberg → feed + chapter articles) ───────────────
+  ensure_book_catalog: { args: void; ret: CatalogStatus };
+  search_books: {
+    args: { query: string; shelf: string | null };
+    ret: CatalogBook[];
+  };
+  import_book: { args: { gid: number }; ret: ImportedBook };
 
   // ── config ────────────────────────────────────────────────────────────
   get_config: { args: void; ret: AppConfig };

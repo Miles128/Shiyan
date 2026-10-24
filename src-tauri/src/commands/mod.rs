@@ -5,6 +5,7 @@
 //! and maps errors out. `lib.rs` registers the full handler list.
 
 pub mod articles;
+pub mod books;
 pub mod config;
 pub mod data;
 pub mod feeds;

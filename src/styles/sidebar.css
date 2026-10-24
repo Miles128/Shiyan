@@ -61,6 +61,12 @@ body.is-resizing {
   color: var(--muted);
 }
 
+/* Books get their own section below the RSS tree. */
+.sidebar-divider {
+  margin: 12px 0 6px;
+  border-top: 1px solid var(--line);
+}
+
 /* Codex-style tree: branch rows (category / 今日推荐) + draggable leaf rows. */
 .tree-node {
   margin-bottom: 2px;

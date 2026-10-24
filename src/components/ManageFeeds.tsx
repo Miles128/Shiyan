@@ -34,12 +34,18 @@ export default function ManageFeeds() {
   }, [load]);
 
   const filteredFeeds = useMemo(() => {
-    if (categoryId === "all") return feeds;
-    return feeds.filter((f) => f.category === categoryId);
+    const rssFeeds = feeds.filter((f) => f.kind !== "book");
+    if (categoryId === "all") return rssFeeds;
+    return rssFeeds.filter((f) => f.category === categoryId);
   }, [feeds, categoryId]);
 
+  const rssCategories = useMemo(
+    () => categories.filter((c) => c.id !== "book"),
+    [categories],
+  );
+
   const addCategoryId =
-    categoryId === "all" ? categories[0]?.id ?? "tech" : categoryId;
+    categoryId === "all" ? rssCategories[0]?.id ?? "tech" : categoryId;
 
   async function toggleFeed(id: string, enabled: boolean) {
     setError(null);
@@ -131,7 +137,7 @@ export default function ManageFeeds() {
         >
           全部
         </button>
-        {categories.map((c) => (
+        {rssCategories.map((c) => (
           <button
             key={c.id}
             type="button"

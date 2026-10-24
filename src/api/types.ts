@@ -6,6 +6,9 @@ export type { ArticleListItem } from "../../src-tauri/core/bindings/ArticleListI
 export type { RankWindow } from "../../src-tauri/core/bindings/RankWindow";
 export type { ArticleView } from "../../src-tauri/core/bindings/ArticleView";
 export type { BookContext } from "../../src-tauri/core/bindings/BookContext";
+export type { CatalogBook } from "../../src-tauri/core/bindings/CatalogBook";
+export type { CatalogStatus } from "../../src-tauri/core/bindings/CatalogStatus";
+export type { ImportedBook } from "../../src-tauri/core/bindings/ImportedBook";
 export type { FeedCategory } from "../../src-tauri/core/bindings/FeedCategory";
 export type { FeedSource } from "../../src-tauri/core/bindings/FeedSource";
 export type { FeedValidation } from "../../src-tauri/core/bindings/FeedValidation";

@@ -14,12 +14,14 @@ import {
   type FreqBand,
 } from "../wordLevels";
 import ManageFeeds from "../components/ManageFeeds";
+import BooksSection from "../components/BooksSection";
 
-type Tab = "reading" | "subscriptions" | "llm" | "data";
+type Tab = "reading" | "subscriptions" | "books" | "llm" | "data";
 
 const TABS = [
   ["reading", "阅读"],
-  ["subscriptions", "订阅"],
+  ["subscriptions", "RSS"],
+  ["books", "书籍"],
   ["llm", "大模型"],
   ["data", "数据"],
 ] as const;
@@ -176,6 +178,8 @@ export default function Settings() {
           <ManageFeeds />
         </section>
       )}
+
+      {tab === "books" && <BooksSection />}
 
       {tab === "llm" && (
         <section className="settings-section">
