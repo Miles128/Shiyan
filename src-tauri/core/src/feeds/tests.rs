@@ -51,7 +51,6 @@ fn public_http_url_blocks_private_and_local_targets() {
 /// fake feed server. Production builds (`cfg!(test)` false) still block it.
 #[test]
 fn loopback_allowed_for_tests_only() {
-    assert!(cfg!(test));
     for ok in [
         "http://localhost/x",
         "http://127.0.0.1/x",
@@ -767,11 +766,10 @@ fn rejects_page_chrome_and_keyword_teasers() {
     assert!(!is_readable_article_body(&chrome));
     assert!(choose_article_body(&chrome, None).is_none());
 
-    let teaser = format!(
-        "In Chad, the Chari River has been badly affected by years of intensive sand \
+    let teaser = "In Chad, the Chari River has been badly affected by years of intensive sand \
 extraction along its banks, particularly around the capital. The ministry banned \
 the practice to protect wildlife.                            Keywords for this article"
-    );
+        .to_string();
     assert!(!is_readable_article_body(&teaser));
 }
 
@@ -819,7 +817,7 @@ fn probe_extractor_word_counts() {
                 .ok()?;
             Some(String::from_utf8_lossy(&net::read_limited_bytes(resp).ok()?).into_owned())
         })();
-        let whole_page = fetched.as_deref().map(|h| html_to_text(h));
+        let whole_page = fetched.as_deref().map(html_to_text);
         let (gotten, page) = match (&whole, &whole_page) {
             (Some(t), Some(p)) => (
                 t.split_whitespace().count(),

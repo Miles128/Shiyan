@@ -61,6 +61,7 @@ pub async fn list_rank_window(
 
 /// Library listing: every article with the full filter set, newest first.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn list_library(
     app: AppHandle,
     category: Option<String>,

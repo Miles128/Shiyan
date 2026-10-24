@@ -55,7 +55,7 @@ mod e2e_tests {
             .iter()
             .find(|b| b.gid == 2701)
             .expect("Moby Dick missing from search");
-        assert_eq!(moby.title.contains("Moby Dick"), true);
+        assert!(moby.title.contains("Moby Dick"));
         assert!(!moby.imported, "fresh catalog must not report imported");
 
         let first = import_book(&state, moby.gid).expect("import");

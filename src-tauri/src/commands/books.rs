@@ -9,7 +9,7 @@ use tauri::AppHandle;
 /// time). Idempotent — later calls only report the row count.
 #[tauri::command]
 pub async fn ensure_book_catalog(app: AppHandle) -> Result<CatalogStatus, AppError> {
-    crate::commands::spawn_db(app, |state| books::ensure_catalog(state)).await
+    crate::commands::spawn_db(app, books::ensure_catalog).await
 }
 
 /// Local title/author search. `shelf` filters on the coarse genre, empty = all.

@@ -189,7 +189,7 @@ pub fn add_feed_category(conn: &Connection, label: &str) -> Result<FeedCategory,
         params![id, label],
     )
     .map_err(|e| match &e {
-        rusqlite::Error::SqliteFailure(err, _) if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE as i32
+        rusqlite::Error::SqliteFailure(err, _) if err.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
             || err.code == rusqlite::ErrorCode::ConstraintViolation => {
             AppError::msg("分类已存在")
         }

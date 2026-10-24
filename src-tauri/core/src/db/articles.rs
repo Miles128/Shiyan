@@ -432,12 +432,15 @@ pub fn list_article_content_lengths(
     Ok(rows)
 }
 
+/// Source/category name → counter, the shape every affinity query returns.
+type CountMap = std::collections::HashMap<String, i64>;
+
 /// source name → article count in the library. Feeds the sidebar's per-category
 /// count sort / zero-article hiding; articles carry the feed *name* (not id),
 /// so the map is keyed by name just like `source_priority_map`.
 pub fn article_counts_by_source(
     conn: &Connection,
-) -> Result<std::collections::HashMap<String, i64>, AppError> {
+) -> Result<CountMap, AppError> {
     let mut stmt = conn.prepare("SELECT source, COUNT(*) FROM articles GROUP BY source")?;
     let rows = stmt
         .query_map([], |row| {
@@ -668,9 +671,9 @@ fn recent_articles_where(
 /// signal for article ranking.
 pub fn affinity_open_counts(
     conn: &Connection,
-) -> Result<(std::collections::HashMap<String, i64>, std::collections::HashMap<String, i64>), AppError>
+) -> Result<(CountMap, CountMap), AppError>
 {
-    let read = |sql: &str| -> Result<std::collections::HashMap<String, i64>, AppError> {
+    let read = |sql: &str| -> Result<CountMap, AppError> {
         let mut stmt = conn.prepare(sql)?;
         let rows = stmt
             .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))

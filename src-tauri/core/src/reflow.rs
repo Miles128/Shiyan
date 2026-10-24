@@ -376,8 +376,7 @@ fn is_list_item(line: &str) -> bool {
         }
         Some(c) if c.is_ascii_digit() => {
             // Multi-digit numbering: "10. Tenth", "12) Twelfth".
-            let rest: String = chars.by_ref().take_while(|c| c.is_ascii_digit()).collect();
-            let _ = rest;
+            chars.by_ref().take_while(|c| c.is_ascii_digit()).count();
             matches!(chars.next(), Some('.' | ')'))
                 && chars.next().is_some_and(char::is_whitespace)
         }
