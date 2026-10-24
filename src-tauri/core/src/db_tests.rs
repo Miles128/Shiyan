@@ -206,39 +206,6 @@ fn seed_feeds_preserves_user_subscriptions() {
 }
 
 #[test]
-fn seed_feeds_skips_auto_removed_curated_ids() {
-    let tmp = TmpDb::new("tombstone");
-    let conn = tmp.conn();
-    // Pick a real curated id so seed would normally re-insert it.
-    let curated = db::list_feeds(&conn)
-        .unwrap()
-        .into_iter()
-        .find(|f| f.origin == "curated")
-        .expect("seeded curated feed");
-    // Simulate auto-removal: row gone + tombstone written.
-    conn.execute(
-        "INSERT INTO removed_feeds (id, removed_at) VALUES (?1, ?2)",
-        rusqlite::params![curated.id, "2026-01-01T00:00:00Z"],
-    )
-    .unwrap();
-    conn.execute(
-        "DELETE FROM feed_sources WHERE id=?1",
-        rusqlite::params![curated.id],
-    )
-    .unwrap();
-    drop(conn);
-
-    let conn = tmp.conn();
-    assert!(
-        !db::list_feeds(&conn)
-            .unwrap()
-            .iter()
-            .any(|f| f.id == curated.id),
-        "tombstoned curated feed must not be re-seeded"
-    );
-}
-
-#[test]
 fn insert_article_if_new_is_idempotent() {
     let tmp = TmpDb::new("idempotent");
     let conn = tmp.conn();
@@ -1007,7 +974,7 @@ fn pre_collapse_database_is_normalized() {
 }
 
 #[test]
-fn prune_stale_feeds_retires_sources_and_protects_claimed_articles() {
+fn prune_stale_feeds_disables_and_keeps_articles() {
     let tmp = TmpDb::new("prune-stale");
     let conn = tmp.conn();
     let user_feed = db::subscribe_feed(
@@ -1040,59 +1007,26 @@ fn prune_stale_feeds_retires_sources_and_protects_claimed_articles() {
     )
     .unwrap();
 
-    // Articles of the user feed with every protection shape. Protection flags
-    // live in columns insert_article_if_new does not write, so they are
-    // stamped with direct UPDATEs after insert.
     let mut unread = sample_article("stale-unread");
     unread.source = user_feed.name.clone();
     let mut liked = sample_article("stale-liked");
     liked.source = user_feed.name.clone();
-    let mut reading = sample_article("stale-reading");
-    reading.source = user_feed.name.clone();
-    let mut finished = sample_article("stale-finished");
-    finished.source = user_feed.name.clone();
-    for a in [&unread, &liked, &reading, &finished] {
+    for a in [&unread, &liked] {
         db::insert_article_if_new(&conn, a).unwrap();
     }
-    conn.execute(
-        "UPDATE articles SET liked=1 WHERE id='stale-liked'",
-        [],
-    )
-    .unwrap();
-    conn.execute(
-        "UPDATE articles SET last_opened_at='2026-09-30T00:00:00Z' WHERE id='stale-reading'",
-        [],
-    )
-    .unwrap();
-    conn.execute(
-        "UPDATE articles SET last_opened_at='2026-09-30T00:00:00Z', read_completed=1 WHERE id='stale-finished'",
-        [],
-    )
-    .unwrap();
 
     let pruned = db::prune_stale_feeds(&conn, 30).unwrap();
     assert_eq!(pruned.len(), 2, "only the two aged feeds retire");
 
     let feeds = db::list_feeds(&conn).unwrap();
-    // User feed: disabled, not deleted.
-    assert_eq!(
-        feeds
-            .iter()
-            .find(|f| f.id == user_feed.id)
-            .map(|f| f.enabled),
-        Some(false)
-    );
-    // Curated feed: gone, with a tombstone so seed won't resurrect it.
-    assert!(!feeds.iter().any(|f| f.id == curated_feed.id));
-    let tombstones: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM removed_feeds WHERE id=?1",
-            rusqlite::params![curated_feed.id],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(tombstones, 1);
-    // Fresh feed untouched.
+    // Both stale feeds are disabled but still present.
+    for id in [&user_feed.id, &curated_feed.id] {
+        assert_eq!(
+            feeds.iter().find(|f| &f.id == id).map(|f| f.enabled),
+            Some(false),
+            "stale feed stays in the library, disabled"
+        );
+    }
     assert_eq!(
         feeds
             .iter()
@@ -1101,18 +1035,15 @@ fn prune_stale_feeds_retires_sources_and_protects_claimed_articles() {
         Some(true)
     );
 
-    // Article protection: liked + in-progress stay; unread + finished go.
-    let remaining: std::collections::HashSet<String> = conn
-        .prepare("SELECT title FROM articles WHERE source=?1")
-        .unwrap()
-        .query_map(rusqlite::params![user_feed.name], |r| r.get::<_, String>(0))
-        .unwrap()
-        .collect::<Result<_, _>>()
+    // Retirement never touches stored articles.
+    let remaining: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM articles WHERE source=?1",
+            rusqlite::params![user_feed.name],
+            |r| r.get(0),
+        )
         .unwrap();
-    assert!(remaining.contains("stale-liked"));
-    assert!(remaining.contains("stale-reading"));
-    assert!(!remaining.contains("stale-unread"));
-    assert!(!remaining.contains("stale-finished"));
+    assert_eq!(remaining, 2, "stale-feed retirement must not delete articles");
 }
 
 #[test]
@@ -1523,6 +1454,16 @@ fn schema_adds_summary_zh_column() {
             )
             .unwrap();
         assert_eq!(n, 0, "{table}.{column} must be gone after migrate");
+    }
+    for table in ["known_words", "lookup_history", "removed_feeds"] {
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                [table],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 0, "{table} must be gone after migrate");
     }
     let quality_col: i64 = conn
         .query_row(

@@ -35,13 +35,8 @@ pub(crate) fn seed_feeds(conn: &Connection) -> Result<(), AppError> {
             return Ok(());
         }
     };
-    let removed = removed_feed_ids(conn)?;
     // Insert newly curated feeds; IGNORE keeps existing enable/disable.
-    // Tombstoned ids (removed by the one-shot dead-feed cleanup) stay gone.
     for f in &seeds {
-        if removed.contains(f.id.as_str()) {
-            continue;
-        }
         // 新种子从入库起算 30 天观察期；已存在的行被 IGNORE，保留原计时。
         conn.execute(
             "INSERT OR IGNORE INTO feed_sources (id, name, category, url, enabled, origin, description, last_new_article_at) VALUES (?1,?2,?3,?4,1,'curated','',?5)",
@@ -368,15 +363,6 @@ pub fn insert_book_feed(
     })
 }
 
-/// Feed ids a one-time cleanup removed; the startup seed must not re-insert them.
-pub(crate) fn removed_feed_ids(conn: &Connection) -> Result<std::collections::HashSet<String>, AppError> {
-    let mut stmt = conn.prepare("SELECT id FROM removed_feeds")?;
-    let rows = stmt
-        .query_map([], |row| row.get::<_, String>(0))?
-        .collect::<Result<std::collections::HashSet<_>, _>>()?;
-    Ok(rows)
-}
-
 fn find_feed_by_url(conn: &Connection, url: &str) -> Result<Option<FeedSource>, AppError> {    conn.query_row(
         "SELECT id,name,category,url,enabled,origin,description,etag,fulltext_ratio,priority,last_new_article_at,kind FROM feed_sources WHERE url=?1",
         params![url],
@@ -421,18 +407,17 @@ pub fn set_feed_refresh_meta(
     Ok(())
 }
 
-/// 滚动 `days` 天没有任何新文章的启用源自动退场：精选源删除（写入
-/// removed_feeds 墓碑防启动种子复活），用户自建源只停用（删除留给人）。
-/// 退场时顺带清掉该源未读、未点赞的 rss 文章；点赞的和在读的照旧保护。
-/// 返回被清退的源名，供刷新结果汇报。
+/// 滚动 `days` 天没有任何新文章的启用源自动退场：只停用，不删源、不删
+/// 文章。用户想删除订阅时自己删；库里的文章由保留策略和用户行为决定。
+/// 返回被停用的源名，供刷新结果汇报。
 pub fn prune_stale_feeds(conn: &Connection, days: i64) -> Result<Vec<String>, AppError> {
     if days <= 0 {
         return Ok(Vec::new());
     }
     let cutoff = (Utc::now() - chrono::Duration::days(days)).to_rfc3339();
-    let stale: Vec<(String, String, String)> = {
+    let stale: Vec<(String, String)> = {
         let mut stmt = conn.prepare(
-            "SELECT id, name, origin FROM feed_sources
+            "SELECT id, name FROM feed_sources
               WHERE enabled = 1
                 AND kind <> 'book'
                 AND last_new_article_at IS NOT NULL
@@ -440,38 +425,17 @@ pub fn prune_stale_feeds(conn: &Connection, days: i64) -> Result<Vec<String>, Ap
         )?;
         let rows = stmt
             .query_map(params![cutoff], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })?
             .collect::<Result<Vec<_>, _>>()?;
         rows
     };
-    let now = Utc::now().to_rfc3339();
     let mut pruned = Vec::new();
-    for (id, name, origin) in stale {
-        // 与 purge_rss_below_word_threshold 同一套保护口径：liked 或
-        // 「打开过且未读完」的文章不随源退场。
+    for (id, name) in stale {
         conn.execute(
-            "DELETE FROM articles
-              WHERE source = ?1 AND origin = 'rss' AND liked = 0
-                AND NOT (last_opened_at IS NOT NULL AND read_completed = 0)",
-            params![name],
+            "UPDATE feed_sources SET enabled = 0 WHERE id = ?1",
+            params![id],
         )?;
-        if origin == "user" {
-            conn.execute(
-                "UPDATE feed_sources SET enabled = 0 WHERE id = ?1",
-                params![id],
-            )?;
-        } else {
-            conn.execute(
-                "INSERT OR REPLACE INTO removed_feeds (id, removed_at) VALUES (?1, ?2)",
-                params![id, now],
-            )?;
-            conn.execute("DELETE FROM feed_sources WHERE id = ?1", params![id])?;
-        }
         pruned.push(name);
     }
     Ok(pruned)

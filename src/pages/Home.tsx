@@ -346,7 +346,7 @@ export default function Home() {
           (result.skipped_duplicate ? ` · 去重 ${result.skipped_duplicate}` : "") +
           (result.purged_old ? ` · 过期清理 ${result.purged_old}` : "") +
           (result.pruned_stale_feeds
-            ? ` · 清退沉寂源 ${result.pruned_stale_feeds}`
+            ? ` · 停用沉寂源 ${result.pruned_stale_feeds}`
             : "") +
           (result.feeds_unchanged ? ` · ${result.feeds_unchanged} 源无更新` : "") +
           (result.titles_translated ? ` · 补简介 ${result.titles_translated}` : "") +

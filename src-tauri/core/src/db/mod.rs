@@ -642,10 +642,6 @@ CREATE TABLE IF NOT EXISTS app_meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS removed_feeds (
-    id TEXT PRIMARY KEY,
-    removed_at TEXT NOT NULL
-);
 CREATE TABLE IF NOT EXISTS book_catalog (
     gid INTEGER PRIMARY KEY,
     title TEXT NOT NULL DEFAULT '',
@@ -665,7 +661,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_article ON memory_items(article_id);
 /// Version-gated migrations. To add one: raise `LATEST_VERSION` and apply its
 /// DDL inside `migrate` when `stored < N`. Stamp each version with its own
 /// number (never `LATEST_VERSION`) so later steps are not skipped.
-pub(crate) const LATEST_VERSION: i64 = 4;
+pub(crate) const LATEST_VERSION: i64 = 5;
 
 /// The highest user_version any pre-collapse database can carry. Backup files
 /// written before the collapse (`.premigrate-v*.bak`) stamp up to 19; imports
@@ -753,6 +749,14 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), AppError> {
         )?;
         conn.pragma_update(None, "user_version", 4)?;
         stored = 4;
+    }
+
+    if stored < 5 {
+        // Stale feeds are now disabled instead of deleted, so the tombstone
+        // table no longer has a writer.
+        conn.execute("DROP TABLE IF EXISTS removed_feeds", [])?;
+        conn.pragma_update(None, "user_version", 5)?;
+        stored = 5;
     }
 
     if stored < LATEST_VERSION {
