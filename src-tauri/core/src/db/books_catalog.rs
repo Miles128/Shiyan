@@ -72,15 +72,12 @@ pub fn search_catalog(
     }
     let pattern = format!("%{}%", super::articles::escape_like_literal(q));
     let prefix = format!("{}%", super::articles::escape_like_literal(q).to_lowercase());
-    let shelf_filter = if shelf.trim().is_empty() {
-        ""
-    } else {
-        "AND shelf = ?4"
-    };
+    // `?4 = ''` stands in for "no shelf filter" so both modes share one
+    // parameter list and one query_map call.
     let sql = format!(
         "SELECT gid,title,authors,issued,shelf,subjects FROM book_catalog
           WHERE (title LIKE ?1 ESCAPE '\\' OR authors LIKE ?1 ESCAPE '\\')
-            {shelf_filter}
+            AND (?4 = '' OR shelf = ?4)
           ORDER BY CASE
                      WHEN lower(title) LIKE ?2 ESCAPE '\\' THEN 0
                      WHEN title LIKE ?1 ESCAPE '\\' THEN 1
@@ -91,16 +88,12 @@ pub fn search_catalog(
           LIMIT ?3"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let rows = if shelf.trim().is_empty() {
-        stmt.query_map(params![pattern, prefix, limit.clamp(1, 200)], row_as::<CatalogBook>)?
-            .collect::<Result<Vec<_>, _>>()?
-    } else {
-        stmt.query_map(
+    let rows = stmt
+        .query_map(
             params![pattern, prefix, limit.clamp(1, 200), shelf.trim()],
             row_as::<CatalogBook>,
         )?
-        .collect::<Result<Vec<_>, _>>()?
-    };
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
 
