@@ -23,7 +23,7 @@ issued: string,
  * Coarse genre from the first `Category:` entry of the catalog's
  * `Bookshelves` column; '' when the catalog has none.
  */
-shelf: string, subjects: string, 
+shelf: string, 
 /**
  * Already imported as a book feed? Filled by the search command.
  */

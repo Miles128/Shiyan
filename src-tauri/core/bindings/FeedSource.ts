@@ -8,7 +8,7 @@ origin: string, description: string,
 /**
  * HTTP ETag from the last successful fetch; sent back as If-None-Match.
  */
-etag: string, last_fetched_at: string | null, 
+etag: string, 
 /**
  * Fraction of entries in the last refresh whose RSS body was trusted
  * full-text. -1 = unknown (no data yet). Drives the per-feed trust bar.

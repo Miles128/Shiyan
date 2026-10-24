@@ -406,10 +406,9 @@ pub fn refresh_feeds(
                                     &conn,
                                     &feed.id,
                                     download.etag.as_deref(),
-                                    &now,
                                     ratio,
                                     // 有新文章才走动沉寂计时钟；升级旧文不算。
-                                    (inserted > 0).then(|| now.as_str()),
+                                    (inserted > 0).then_some(now.as_str()),
                                 ) {
                                     ok = false;
                                     note_failure(&shared, &feed.name, e);

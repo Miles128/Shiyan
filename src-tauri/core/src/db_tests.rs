@@ -1326,7 +1326,7 @@ fn refresh_meta_moves_stale_clock_only_on_new_articles() {
     .unwrap();
     let now = chrono::Utc::now().to_rfc3339();
     // Fetch without new articles: clock keeps ticking down (stays old).
-    db::set_feed_refresh_meta(&conn, &feed.id, None, &now, None, None).unwrap();
+    db::set_feed_refresh_meta(&conn, &feed.id, None, None, None).unwrap();
     let after_fetch: Option<String> = conn
         .query_row(
             "SELECT last_new_article_at FROM feed_sources WHERE id=?1",
@@ -1339,7 +1339,7 @@ fn refresh_meta_moves_stale_clock_only_on_new_articles() {
         "fetch without new articles must not refresh the stale clock"
     );
     // A new article moves it.
-    db::set_feed_refresh_meta(&conn, &feed.id, None, &now, None, Some(&now)).unwrap();
+    db::set_feed_refresh_meta(&conn, &feed.id, None, None, Some(&now)).unwrap();
     let after_new: String = conn
         .query_row(
             "SELECT last_new_article_at FROM feed_sources WHERE id=?1",
@@ -1666,14 +1666,23 @@ fn schema_adds_summary_zh_column() {
         )
         .unwrap();
     assert_eq!(meta_table, 1, "app_meta should exist after migrate");
-    let tags_col: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('articles') WHERE name='tags_json'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(tags_col, 0, "articles.tags_json is not in the baseline schema");
+    for (table, column) in [
+        ("articles", "tags_json"),
+        ("book_catalog", "subjects"),
+        ("feed_sources", "fail_count"),
+        ("feed_sources", "last_fetched_at"),
+    ] {
+        let n: i64 = conn
+            .query_row(
+                &format!(
+                    "SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name=?1"
+                ),
+                [column],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 0, "{table}.{column} must be gone after migrate");
+    }
     let quality_col: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM pragma_table_info('articles') WHERE name='quality'",
@@ -1690,6 +1699,48 @@ fn schema_adds_summary_zh_column() {
         )
         .unwrap();
     assert_eq!(ratio_col, 1, "feed_sources.fulltext_ratio should exist after migrate");
+}
+
+#[test]
+fn stale_backup_prune_keeps_two_and_drops_legacy() {
+    let tmp = TmpDb::new("backup-prune");
+    let db_path = tmp.file();
+    let dir = tmp.dir();
+    let db_name = db_path.file_name().unwrap().to_string_lossy().to_string();
+    let names = [
+        format!("{db_name}.premigrate-v1.bak"),
+        format!("{db_name}.premigrate-v2.bak"),
+        format!("{db_name}.premigrate-v3.bak"),
+        format!("{db_name}.premigrate-v4.bak"),
+        format!("{db_name}.prereadreset-20261002.bak"),
+        format!("{db_name}-wal.prereadreset-20261002.bak"),
+    ];
+    let base = std::time::SystemTime::now();
+    for (i, name) in names.iter().enumerate() {
+        let file = std::fs::File::create(dir.join(name)).unwrap();
+        file.set_times(
+            std::fs::FileTimes::new()
+                .set_modified(base + std::time::Duration::from_secs(i as u64)),
+        )
+        .unwrap();
+    }
+
+    db::prune_stale_backups(&db_path);
+
+    let mut remaining: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    remaining.sort();
+    assert_eq!(
+        remaining,
+        vec![
+            format!("{db_name}.premigrate-v3.bak"),
+            format!("{db_name}.premigrate-v4.bak"),
+        ],
+        "keep the two newest snapshots, drop legacy prereadreset files"
+    );
 }
 
 #[test]
@@ -1830,7 +1881,6 @@ fn catalog_search_ranks_prefix_first_and_filters_by_shelf() {
         authors: authors.into(),
         issued: "1871-01-01".into(),
         shelf: shelf.into(),
-        subjects: String::new(),
         imported: false,
     };
     for b in [

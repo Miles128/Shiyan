@@ -29,9 +29,9 @@ pub fn clear_catalog(conn: &Connection) -> Result<(), AppError> {
 /// materializing them all first would cost tens of MB for no gain.
 pub fn insert_catalog_row(conn: &Connection, b: &CatalogBook) -> Result<(), AppError> {
     conn.execute(
-        "INSERT OR REPLACE INTO book_catalog (gid,title,authors,issued,shelf,subjects)
-         VALUES (?1,?2,?3,?4,?5,?6)",
-        params![b.gid, b.title, b.authors, b.issued, b.shelf, b.subjects],
+        "INSERT OR REPLACE INTO book_catalog (gid,title,authors,issued,shelf)
+         VALUES (?1,?2,?3,?4,?5)",
+        params![b.gid, b.title, b.authors, b.issued, b.shelf],
     )?;
     Ok(())
 }
@@ -74,8 +74,7 @@ pub fn search_catalog(
     let prefix = format!("{}%", super::articles::escape_like_literal(q).to_lowercase());
     // `?4 = ''` stands in for "no shelf filter" so both modes share one
     // parameter list and one query_map call.
-    let sql = format!(
-        "SELECT gid,title,authors,issued,shelf,subjects FROM book_catalog
+    let sql = "SELECT gid,title,authors,issued,shelf FROM book_catalog
           WHERE (title LIKE ?1 ESCAPE '\\' OR authors LIKE ?1 ESCAPE '\\')
             AND (?4 = '' OR shelf = ?4)
           ORDER BY CASE
@@ -85,9 +84,8 @@ pub fn search_catalog(
                    END,
                    LENGTH(title) ASC,
                    title ASC
-          LIMIT ?3"
-    );
-    let mut stmt = conn.prepare(&sql)?;
+          LIMIT ?3";
+    let mut stmt = conn.prepare(sql)?;
     let rows = stmt
         .query_map(
             params![pattern, prefix, limit.clamp(1, 200), shelf.trim()],
@@ -99,7 +97,7 @@ pub fn search_catalog(
 
 pub fn get_catalog_book(conn: &Connection, gid: i64) -> Result<Option<CatalogBook>, AppError> {
     conn.query_row(
-        "SELECT gid,title,authors,issued,shelf,subjects FROM book_catalog WHERE gid=?1",
+        "SELECT gid,title,authors,issued,shelf FROM book_catalog WHERE gid=?1",
         params![gid],
         row_as::<CatalogBook>,
     )

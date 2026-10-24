@@ -69,7 +69,7 @@ pub(crate) fn seed_feeds(conn: &Connection) -> Result<(), AppError> {
 pub fn list_feeds(conn: &Connection) -> Result<Vec<FeedSource>, AppError> {
     let mut stmt = conn
         .prepare(
-            "SELECT id,name,category,url,enabled,origin,description,etag,last_fetched_at,fulltext_ratio,priority,last_new_article_at,kind FROM feed_sources ORDER BY category, priority DESC, name",
+            "SELECT id,name,category,url,enabled,origin,description,etag,fulltext_ratio,priority,last_new_article_at,kind FROM feed_sources ORDER BY category, priority DESC, name",
         )
         ?;
     let rows = stmt
@@ -378,7 +378,7 @@ pub(crate) fn removed_feed_ids(conn: &Connection) -> Result<std::collections::Ha
 }
 
 fn find_feed_by_url(conn: &Connection, url: &str) -> Result<Option<FeedSource>, AppError> {    conn.query_row(
-        "SELECT id,name,category,url,enabled,origin,description,etag,last_fetched_at,fulltext_ratio,priority,last_new_article_at,kind FROM feed_sources WHERE url=?1",
+        "SELECT id,name,category,url,enabled,origin,description,etag,fulltext_ratio,priority,last_new_article_at,kind FROM feed_sources WHERE url=?1",
         params![url],
         row_as::<FeedSource>,
     )
@@ -398,8 +398,8 @@ fn feed_id_exists(conn: &Connection, id: &str) -> Result<bool, AppError> {
     Ok(n > 0)
 }
 
-/// Persist per-refresh metadata: HTTP ETag (for 304 reuse), fetch timestamp,
-/// and the observed full-text ratio that adapts the next refresh's trust bar.
+/// Persist per-refresh metadata: HTTP ETag (for 304 reuse) and the observed
+/// full-text ratio that adapts the next refresh's trust bar.
 /// `fulltext_ratio` of `None` leaves the stored value untouched.
 /// `new_article_at` of `Some` stamps the rolling "last new article" clock that
 /// the stale-feed prune reads (None keeps it).
@@ -407,18 +407,16 @@ pub fn set_feed_refresh_meta(
     conn: &Connection,
     id: &str,
     etag: Option<&str>,
-    last_fetched_at: &str,
     fulltext_ratio: Option<f64>,
     new_article_at: Option<&str>,
 ) -> Result<(), AppError> {
     conn.execute(
         "UPDATE feed_sources
          SET etag = COALESCE(?2, etag),
-             last_fetched_at = ?3,
-             fulltext_ratio = COALESCE(?4, fulltext_ratio),
-             last_new_article_at = COALESCE(?5, last_new_article_at)
+             fulltext_ratio = COALESCE(?3, fulltext_ratio),
+             last_new_article_at = COALESCE(?4, last_new_article_at)
          WHERE id=?1",
-        params![id, etag, last_fetched_at, fulltext_ratio, new_article_at],
+        params![id, etag, fulltext_ratio, new_article_at],
     )?;
     Ok(())
 }

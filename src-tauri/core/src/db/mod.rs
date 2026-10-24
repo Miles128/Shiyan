@@ -266,8 +266,6 @@ pub struct FeedSource {
     /// HTTP ETag from the last successful fetch; sent back as If-None-Match.
     #[serde(default)]
     pub etag: String,
-    #[serde(default)]
-    pub last_fetched_at: Option<String>,
     /// Fraction of entries in the last refresh whose RSS body was trusted
     /// full-text. -1 = unknown (no data yet). Drives the per-feed trust bar.
     #[serde(default)]
@@ -323,7 +321,6 @@ pub struct CatalogBook {
     /// Coarse genre from the first `Category:` entry of the catalog's
     /// `Bookshelves` column; '' when the catalog has none.
     pub shelf: String,
-    pub subjects: String,
     /// Already imported as a book feed? Filled by the search command.
     #[serde(default)]
     pub imported: bool,
@@ -507,6 +504,7 @@ pub fn open_db(path: PathBuf, run_migrations: bool) -> Result<Connection, AppErr
         migrate(&conn)?;
         feeds::seed_feed_categories(&conn)?;
         feeds::seed_feeds(&conn)?;
+        prune_stale_backups(&path);
     }
     Ok(conn)
 }
@@ -532,32 +530,42 @@ pub(crate) fn backup_before_migration(conn: &Connection, path: &std::path::Path)
         return;
     }
     if vacuum_into_file(conn, &backup).is_ok() {
-        prune_migration_backups(path);
+        prune_stale_backups(path);
     }
 }
 
-/// Keep only the two newest `premigrate-vN.bak` snapshots; each migration used
-/// to leave one behind forever (~107 MB of history on a single-user install).
-fn prune_migration_backups(path: &std::path::Path) {
+/// Keep the two newest `premigrate-vN.bak` snapshots and drop the legacy
+/// `prereadreset` snapshots no current build writes. Called on every startup,
+/// not only after a migration: once migrations stop, the history used to sit
+/// forever (146 MB of `.bak` files on one install).
+pub(crate) fn prune_stale_backups(path: &std::path::Path) {
     const KEEP: usize = 2;
     let Ok(entries) = std::fs::read_dir(path.parent().unwrap_or(std::path::Path::new(".")))
     else {
         return;
     };
-    let prefix = format!("{DB_FILE_NAME}.premigrate-");
-    let mut backups: Vec<(std::time::SystemTime, std::path::PathBuf)> = entries
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with(&prefix) && n.ends_with(".bak"))
-        })
-        .filter_map(|p| {
-            let mtime = p.metadata().and_then(|m| m.modified()).ok()?;
-            Some((mtime, p))
-        })
-        .collect();
+    let migration_prefix = format!("{DB_FILE_NAME}.premigrate-");
+    let legacy_prefixes = [
+        format!("{DB_FILE_NAME}.prereadreset-"),
+        format!("{DB_FILE_NAME}-wal.prereadreset-"),
+    ];
+    let mut backups: Vec<(std::time::SystemTime, std::path::PathBuf)> = Vec::new();
+    for entry in entries.flatten() {
+        let p = entry.path();
+        let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if legacy_prefixes.iter().any(|prefix| name.starts_with(prefix)) {
+            let _ = std::fs::remove_file(p);
+            continue;
+        }
+        if !name.starts_with(&migration_prefix) || !name.ends_with(".bak") {
+            continue;
+        }
+        if let Ok(mtime) = p.metadata().and_then(|m| m.modified()) {
+            backups.push((mtime, p));
+        }
+    }
     // Newest first; mtime (not the version number in the name) is the truth,
     // because several historical snapshots share the same size and order is
     // only meaningful by when they were taken.
@@ -604,10 +612,8 @@ CREATE TABLE IF NOT EXISTS feed_sources (
     origin TEXT NOT NULL DEFAULT 'curated',
     description TEXT NOT NULL DEFAULT '',
     etag TEXT NOT NULL DEFAULT '',
-    last_fetched_at TEXT,
     fulltext_ratio REAL NOT NULL DEFAULT -1,
     priority INTEGER NOT NULL DEFAULT 0,
-    fail_count INTEGER NOT NULL DEFAULT 0,
     last_new_article_at TEXT,
     kind TEXT NOT NULL DEFAULT 'rss'
 );
@@ -671,8 +677,7 @@ CREATE TABLE IF NOT EXISTS book_catalog (
     title TEXT NOT NULL DEFAULT '',
     authors TEXT NOT NULL DEFAULT '',
     issued TEXT NOT NULL DEFAULT '',
-    shelf TEXT NOT NULL DEFAULT '',
-    subjects TEXT NOT NULL DEFAULT ''
+    shelf TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_articles_category ON articles(category);
 CREATE INDEX IF NOT EXISTS idx_articles_fetched ON articles(fetched_at DESC);
@@ -689,7 +694,7 @@ CREATE INDEX IF NOT EXISTS idx_lookup_term ON lookup_history(lower(term));
 /// Version-gated migrations. To add one: raise `LATEST_VERSION` and apply its
 /// DDL inside `migrate` when `stored < N`. Stamp each version with its own
 /// number (never `LATEST_VERSION`) so later steps are not skipped.
-pub(crate) const LATEST_VERSION: i64 = 2;
+pub(crate) const LATEST_VERSION: i64 = 3;
 
 /// The highest user_version any pre-collapse database can carry. Backup files
 /// written before the collapse (`.premigrate-v*.bak`) stamp up to 19; imports
@@ -704,6 +709,21 @@ fn drop_title_zh_column(conn: &Connection) -> Result<(), AppError> {
         if !msg.contains("no such column") {
             return Err(AppError::from(e));
         }
+    }
+    Ok(())
+}
+
+/// Drop a column only when the table still has it. Fresh baselines are born
+/// without these legacy columns, while pre-collapse databases (and old
+/// backups) still carry them.
+fn drop_column_if_exists(conn: &Connection, table: &str, column: &str) -> Result<(), AppError> {
+    let exists: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name=?1"),
+        rusqlite::params![column],
+        |row| row.get(0),
+    )?;
+    if exists > 0 {
+        conn.execute(&format!("ALTER TABLE {table} DROP COLUMN {column}"), [])?;
     }
     Ok(())
 }
@@ -732,6 +752,22 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), AppError> {
         drop_title_zh_column(conn)?;
         conn.pragma_update(None, "user_version", 2)?;
         stored = 2;
+    }
+
+    if stored < 3 {
+        // Dead metadata kept by old databases only: article tags, catalog
+        // subjects, feed fail counters and last-fetch timestamps. None of them
+        // is read by the current app.
+        for (table, column) in [
+            ("articles", "tags_json"),
+            ("book_catalog", "subjects"),
+            ("feed_sources", "fail_count"),
+            ("feed_sources", "last_fetched_at"),
+        ] {
+            drop_column_if_exists(conn, table, column)?;
+        }
+        conn.pragma_update(None, "user_version", 3)?;
+        stored = 3;
     }
 
     if stored < LATEST_VERSION {

@@ -7,10 +7,9 @@
 //! dependency for a search box.
 //!
 //! Columns used: `Text#`, `Type`, `Issued`, `Title`, `Language`, `Authors`,
-//! `Subjects`, `LoCC`, `Bookshelves`. Genre comes from the first
-//! `Category: X` entry of `Bookshelves` (`Category: Novels` → `Novels`); the
-//! raw first entry is often a shelf like `Best Books Ever Listings`, which is
-//! useless as a filter.
+//! `Bookshelves`. Genre comes from the first `Category: X` entry of
+//! `Bookshelves` (`Category: Novels` → `Novels`); the raw first entry is often a
+//! shelf like `Best Books Ever Listings`, which is useless as a filter.
 
 use crate::db::{self, CatalogBook, DbState};
 use crate::error::AppError;
@@ -21,9 +20,6 @@ use ts_rs::TS;
 pub const CATALOG_URL: &str = "https://www.gutenberg.org/cache/epub/feeds/pg_catalog.csv";
 /// Sanity bound: the real file is ~21 MB. Anything near this is a wrong URL.
 const CATALOG_MAX_BYTES: usize = 64 * 1024 * 1024;
-/// Stored per row; the longest real subject list is ~900 chars and only the
-/// first few subjects are ever shown.
-const SUBJECTS_MAX_CHARS: usize = 300;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -131,12 +127,6 @@ fn to_catalog_book(fields: &[&str]) -> Option<CatalogBook> {
         authors: crate::books::text::collapse_spaces(fields[5]),
         issued: fields[2].trim().to_string(),
         shelf: shelf_from_bookshelves(fields[8]),
-        subjects: fields[6]
-            .chars()
-            .take(SUBJECTS_MAX_CHARS)
-            .collect::<String>()
-            .trim()
-            .to_string(),
         imported: false,
     })
 }
