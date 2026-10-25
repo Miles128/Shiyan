@@ -19,7 +19,7 @@ src/                  React 前端
   store.tsx           AppConfig / Shell(订阅源+筛选) / Vocab(学习中生词) 三组 Context
   api/                Tauri invoke 封装层（config/feeds/articles/memory/books/data + 类型门面）
   pages/              Home(主界面：文章列表+筛选) Reader(阅读) Vocab(生词/短语两库) Stats Settings(分页) Placement(词汇测评)
-  components/         SelectionPopover(划词浮窗) MemoryLibrary(生词/短语共用) SourceBoard ArticleRow ManageFeeds ReaderParagraph BooksSection BookSearchDialog(Gutenberg 下载)
+  components/         SelectionPopover(划词浮窗) MemoryLibrary(生词/短语共用) ArticleRow ManageFeeds ReaderParagraph BooksSection(侧栏书籍段) BookSearchDialog(Gutenberg 目录搜索与导入) ReaderTypePanel(Aa 排版面板) PageBack Toaster
   bookDerived.ts      书籍域展示助手：作者名翻转/元信息行/书架分类/导入摘要（node-only vitest 可测，同 homeDerived 惯例）
   homeDerived.ts      Home 列表派生逻辑：摘要/长度标签/按源分组/标签栏/今日推荐/难度加权排序
   wordResolve.ts      划词解析域：选区归一(lemma/全大写/短语判定) + 内置词典详情(word-details.json)
@@ -38,6 +38,7 @@ src-tauri/            Cargo workspace（target/ 仍是唯一产物目录）
     src/books/        公版书下载（Project Gutenberg）：catalog(官方 CSV 下载+镜像) text(.txt 清洗) chapters(章切分) import(单书导入)；一书=feed_sources 行 kind='book'，一章=普通文章 origin='book'
     src/feeds/        RSS 管线（按职责分模块）：net(HTTP/SSRF/URL校验) filters(可读性/英文/屏蔽/付费墙) extract(页面抽取) dedup(URL/标题去重) pipeline(refresh主流程) cleanup(清理/保留) enrich(翻译/标签回填) tests
     src/vocab.rs      OpenAI 兼容 LLM 客户端：段落翻译、生词/短语 enrichment
+    src/apple_translate.rs  macOS 系统翻译桥（Apple Translation framework，Swift helper 管道）
     src/translate.rs  翻译缓存 + 编排层
     src/reflow.rs     段落整形（core 内部，仅 feeds/测试调用）
     src/article_view.rs Reader 载荷组装(ArticleView = 文章+段落+缓存翻译)
@@ -45,6 +46,9 @@ src-tauri/            Cargo workspace（target/ 仍是唯一产物目录）
     src/config.rs     config.local.json 读写(API key 等)，0600 权限
     bindings/         ts-rs 生成的 TS 绑定
     resources/        curated_feeds.json（include_str 进 db 层）
+  swift/
+    shiyan-translate/  系统翻译 helper 源码（Apple Translation framework，JSON 管道）
+resources/           build.rs 产出的 shiyan-translate 二进制（gitignore，打包进 .app/Contents/Resources）
 ```
 
 ## 数据流与关键约定
@@ -57,6 +61,8 @@ src-tauri/            Cargo workspace（target/ 仍是唯一产物目录）
 - 公版书下载保留，但与 RSS 在界面上分区：Settings 有独立「书籍」页，侧边栏书籍单独一段，RSS 管理不列书籍。数据层仍复用订阅模型：一书 = `feed_sources` 行(`kind='book'`)，一章 = 普通文章(`origin='book'`、`chapter_no=章序`)；purge 永不碰 `origin='book'`。
 - `title_zh`、`tags_json`、`known_words`、`lookup_history`、`removed_feeds` 等旧结构均由迁移删除，不要再往结构体或 SQL 里加回。
 - LLM 配置在 `config.local.json`（gitignore）；无 Key 时翻译功能优雅降级。
+- 正文翻译走**双引擎**：`config.local.json` 的 `translation_provider` = `auto`（默认，系统翻译不可用时回退 API）/ `apple`（仅系统翻译，正文不出本机）/ `api`（仅 LLM）。路由在 `vocab::translate_text` / `translate_texts`；`auto` 模式下系统引擎失败会自动回退 API，`apple` 模式下失败即报错（绝不外发正文）。**标题简介（`translate_article_cards`）与生词释义（`enrich_vocab` / `enrich_phrase`）是生成任务，始终走 API**，系统翻译只做正文翻译。
+- 系统翻译 = Swift helper `shiyan-translate`（`src-tauri/swift/shiyan-translate/main.swift`）调 Apple Translation framework 的无 UI 会话：stdin `{"texts":[...]}` → stdout `{"translations":[...]}`，`--check` 探测可用性。**需要 macOS 26+ 且用户手动装了中英翻译语言包**——程序无法自行下载（`canRequestDownloads` 在非 GUI 上下文恒为 false）。helper 由 `build.rs` 用 `xcrun swiftc` 编译到 `src-tauri/resources/`（gitignore），并复制到 target profile 目录供 dev 使用；打包时经 `bundle.resources` 进 `.app/Contents/Resources/shiyan-translate`。改动 helper 后无需手动编译，`build.rs` 按 mtime 重建。
 
 前端测试约定：vitest 为 node 环境、只收 `src/**/*.test.ts`，测试文件不得拖 react/store 依赖图。可测试的纯逻辑从组件抽出，但**按域归堆**（如 homeDerived/wordResolve），不要一个函数开一个文件；组件内的逻辑要测时抽到域模块而不是建孤儿文件。
 
