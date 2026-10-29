@@ -1,5 +1,5 @@
 use crate::error::AppError;
-use super::{row_as, Article, ArticleListItem};
+use super::{count_map, row_as, Article, ArticleListItem, CountMap};
 use rusqlite::{params, Connection, OptionalExtension};
 
 /// Full-row projection. The list projection is derived from this (see
@@ -357,22 +357,15 @@ fn build_stats(
     let top_sources = {
         let mut stmt = conn
             .prepare(&format!(
-                "SELECT source, COUNT(*), CAST(IFNULL(SUM(dwell_ms),0)/60000 AS INTEGER)
+                "SELECT source AS name, COUNT(*) AS articles,
+                        CAST(IFNULL(SUM(dwell_ms),0)/60000 AS INTEGER) AS minutes
                  FROM articles WHERE {read_filter}
                  GROUP BY source ORDER BY SUM(dwell_ms) DESC, COUNT(*) DESC LIMIT 6"
             ))
             ?;
         let rows = stmt
-            .query_map([], |row| {
-                Ok(super::SourceStat {
-                    name: row.get(0)?,
-                    articles: row.get(1)?,
-                    minutes: row.get(2)?,
-                })
-            })
-            ?
-            .collect::<Result<Vec<_>, _>>()
-            ?;
+            .query_map([], row_as::<super::SourceStat>)?
+            .collect::<Result<Vec<_>, _>>()?;
         rows
     };
 
@@ -432,31 +425,26 @@ pub fn list_article_content_lengths(
     Ok(rows)
 }
 
-/// Source/category name → counter, the shape every affinity query returns.
-type CountMap = std::collections::HashMap<String, i64>;
-
 /// source name → article count in the library. Feeds the sidebar's per-category
 /// count sort / zero-article hiding; articles carry the feed *name* (not id),
 /// so the map is keyed by name just like `source_priority_map`.
 pub fn article_counts_by_source(
     conn: &Connection,
 ) -> Result<CountMap, AppError> {
-    let mut stmt = conn.prepare("SELECT source, COUNT(*) FROM articles GROUP BY source")?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-        })?
-        .collect::<Result<std::collections::HashMap<_, _>, _>>()?;
-    Ok(rows)
+    count_map(conn, "SELECT source, COUNT(*) FROM articles GROUP BY source")
 }
 
-/// Insert only when `url` is new. Returns `true` if inserted, `false` if already present.
-/// Idempotent: never overwrites existing content / translations.
-pub fn insert_article_if_new(conn: &Connection, a: &Article) -> Result<bool, AppError> {
+/// Shared INSERT for both RSS articles and book chapters. `chapter_no` is the
+/// only column that differs: book chapters stamp it, RSS rows leave it NULL.
+fn insert_article_row(
+    conn: &Connection,
+    a: &Article,
+    chapter_no: Option<i64>,
+) -> Result<bool, AppError> {
     let changed = conn
         .execute(
-            "INSERT INTO articles (id,url,title,source,category,published_at,content_text,fetched_at,origin,summary_zh,word_count)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
+            "INSERT INTO articles (id,url,title,source,category,published_at,content_text,fetched_at,origin,summary_zh,word_count,chapter_no)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
              ON CONFLICT(url) DO NOTHING",
             params![
                 a.id,
@@ -470,10 +458,17 @@ pub fn insert_article_if_new(conn: &Connection, a: &Article) -> Result<bool, App
                 a.origin,
                 a.summary_zh,
                 a.word_count,
+                chapter_no,
             ],
         )
         ?;
     Ok(changed > 0)
+}
+
+/// Insert only when `url` is new. Returns `true` if inserted, `false` if already present.
+/// Idempotent: never overwrites existing content / translations.
+pub fn insert_article_if_new(conn: &Connection, a: &Article) -> Result<bool, AppError> {
+    insert_article_row(conn, a, None)
 }
 
 /// Refresh an existing RSS article when a longer full-text body is available.
@@ -673,15 +668,7 @@ pub fn affinity_open_counts(
     conn: &Connection,
 ) -> Result<(CountMap, CountMap), AppError>
 {
-    let read = |sql: &str| -> Result<CountMap, AppError> {
-        let mut stmt = conn.prepare(sql)?;
-        let rows = stmt
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
-            ?
-            .collect::<Result<std::collections::HashMap<_, _>, _>>()
-            ?;
-        Ok(rows)
-    };
+    let read = |sql: &str| count_map(conn, sql);
     let by_source = read(
         "SELECT source, SUM(open_count) FROM articles WHERE open_count > 0 GROUP BY source",
     )?;
@@ -750,27 +737,7 @@ pub fn insert_book_chapter(
     a: &Article,
     chapter_no: i64,
 ) -> Result<bool, AppError> {
-    let changed = conn
-        .execute(
-            "INSERT INTO articles (id,url,title,source,category,published_at,content_text,fetched_at,origin,summary_zh,word_count,chapter_no)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
-             ON CONFLICT(url) DO NOTHING",
-            params![
-                a.id,
-                a.url,
-                a.title,
-                a.source,
-                a.category,
-                a.published_at,
-                a.content_text,
-                a.fetched_at,
-                a.origin,
-                a.summary_zh,
-                a.word_count,
-                chapter_no,
-            ],
-        )?;
-    Ok(changed > 0)
+    insert_article_row(conn, a, Some(chapter_no))
 }
 
 /// Where a chapter sits inside its book, with the neighbour ids the reader's

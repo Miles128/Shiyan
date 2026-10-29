@@ -39,6 +39,18 @@ pub fn row_as<T: serde::de::DeserializeOwned>(row: &rusqlite::Row<'_>) -> rusqli
     })
 }
 
+/// `(TEXT, INTEGER)` rows as a map: the shape every affinity/count query returns.
+pub type CountMap = std::collections::HashMap<String, i64>;
+
+/// Run a two-column `(TEXT, INTEGER)` query into a [`CountMap`].
+pub fn count_map(conn: &Connection, sql: &str) -> Result<CountMap, AppError> {
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?
+        .collect::<Result<CountMap, _>>()?;
+    Ok(rows)
+}
+
 /// Two pooled connections to the same WAL database. Writes serialize on the
 /// write connection; reads run concurrently on the read connection instead of
 /// queueing behind every writer.
@@ -479,6 +491,17 @@ pub(crate) fn prune_stale_backups(path: &std::path::Path) {
     }
 }
 
+/// Mirror of the Project Gutenberg catalog. Kept as its own script because the
+/// baseline and the later migrations that had to (re)create it share it.
+const BOOK_CATALOG_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS book_catalog (
+    gid INTEGER PRIMARY KEY,
+    title TEXT NOT NULL DEFAULT '',
+    authors TEXT NOT NULL DEFAULT '',
+    issued TEXT NOT NULL DEFAULT '',
+    shelf TEXT NOT NULL DEFAULT ''
+);"#;
+
 /// The current schema, collapsed from the historical v1–v19 evolution
 /// (2026-10). Each migration's DDL was merged into one idempotent baseline, so
 /// a fresh database is born at the shape v19 used to leave behind.
@@ -558,13 +581,6 @@ CREATE TABLE IF NOT EXISTS app_meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS book_catalog (
-    gid INTEGER PRIMARY KEY,
-    title TEXT NOT NULL DEFAULT '',
-    authors TEXT NOT NULL DEFAULT '',
-    issued TEXT NOT NULL DEFAULT '',
-    shelf TEXT NOT NULL DEFAULT ''
-);
 CREATE INDEX IF NOT EXISTS idx_articles_category ON articles(category);
 CREATE INDEX IF NOT EXISTS idx_articles_fetched ON articles(fetched_at DESC);
 CREATE INDEX IF NOT EXISTS idx_translations_article ON translations(article_id);
@@ -578,18 +594,6 @@ CREATE INDEX IF NOT EXISTS idx_memory_article ON memory_items(article_id);
 /// DDL inside `migrate` when `stored < N`. Stamp each version with its own
 /// number (never `LATEST_VERSION`) so later steps are not skipped.
 pub(crate) const LATEST_VERSION: i64 = 7;
-
-/// Drop the deprecated `articles.title_zh` column (v2). Tolerates "no such
-/// column": fresh baselines never had it.
-fn drop_title_zh_column(conn: &Connection) -> Result<(), AppError> {
-    if let Err(e) = conn.execute("ALTER TABLE articles DROP COLUMN title_zh", []) {
-        let msg = e.to_string();
-        if !msg.contains("no such column") {
-            return Err(AppError::from(e));
-        }
-    }
-    Ok(())
-}
 
 /// Drop a column only when the table still has it. Fresh baselines are born
 /// without these legacy columns, while pre-collapse databases (and old
@@ -622,12 +626,13 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), AppError> {
 
     if stored < 1 {
         conn.execute_batch(BASELINE_SCHEMA)?;
+        conn.execute_batch(BOOK_CATALOG_SCHEMA)?;
         conn.pragma_update(None, "user_version", 1)?;
         stored = 1;
     }
 
     if stored < 2 {
-        drop_title_zh_column(conn)?;
+        drop_column_if_exists(conn, "articles", "title_zh")?;
         conn.pragma_update(None, "user_version", 2)?;
         stored = 2;
     }
@@ -671,17 +676,8 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), AppError> {
     }
 
     if stored < 6 {
-        // Book download is back; v6 used to drop the catalog mirror in an
-        // interim build. Recreate it empty rather than deleting existing rows.
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS book_catalog (
-                gid INTEGER PRIMARY KEY,
-                title TEXT NOT NULL DEFAULT '',
-                authors TEXT NOT NULL DEFAULT '',
-                issued TEXT NOT NULL DEFAULT '',
-                shelf TEXT NOT NULL DEFAULT ''
-            );",
-        )?;
+        // v6 used to drop the catalog mirror in an interim build; the table is
+        // recreated by v7 below, so this step only advances the version.
         conn.pragma_update(None, "user_version", 6)?;
         stored = 6;
     }
@@ -689,15 +685,7 @@ pub(crate) fn migrate(conn: &Connection) -> Result<(), AppError> {
     if stored < 7 {
         // Databases that already ran the interim v6 (catalog dropped) need the
         // mirror back; this is a no-op everywhere else.
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS book_catalog (
-                gid INTEGER PRIMARY KEY,
-                title TEXT NOT NULL DEFAULT '',
-                authors TEXT NOT NULL DEFAULT '',
-                issued TEXT NOT NULL DEFAULT '',
-                shelf TEXT NOT NULL DEFAULT ''
-            );",
-        )?;
+        conn.execute_batch(BOOK_CATALOG_SCHEMA)?;
         conn.pragma_update(None, "user_version", 7)?;
         stored = 7;
     }

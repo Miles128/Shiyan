@@ -203,11 +203,6 @@ a.brand-mini:hover {
     serif;
   --reader-size: 18px;
   --reader-lh: 1.75;
-  --reader-measure: 100%;
-}
-
-.page.reader.reader-full {
-  max-width: none;
 }
 
 .page.reader h1 {

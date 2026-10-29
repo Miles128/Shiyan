@@ -31,7 +31,7 @@ import {
 } from "../wordLevels";
 import ArticleRow from "../components/ArticleRow";
 import { lastArticlePath } from "../useArticle";
-import WordPopoverShell from "../components/WordPopoverShell";
+import SelectionPopover from "../components/SelectionPopover";
 import {
   bundledGloss,
   cachedTranslation,
@@ -124,7 +124,6 @@ export default function Home() {
             search: serverSearch,
           })
         : api.listLibrary({
-            category: undefined,
             source: focusSource ?? undefined,
             readState: filters.read,
             likedOnly: filters.likedOnly,
@@ -628,7 +627,7 @@ export default function Home() {
         </>
       )}
 
-      {popoverMount && <WordPopoverShell {...popoverMount} />}
+      {popoverMount && <SelectionPopover {...popoverMount} />}
 
       {/* 今日推荐恒 10 篇封顶：该模式不挂无限滚动哨兵，避免空转加载 */}
       {hasMore && !showPicks && (

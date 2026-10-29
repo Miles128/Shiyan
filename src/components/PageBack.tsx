@@ -1,4 +1,6 @@
 import { useNavigate } from "react-router-dom";
+import IconBtn from "./IconBtn";
+import { IconBack } from "./icons";
 
 /**
  * Borderless back-to-home icon button.
@@ -7,27 +9,10 @@ import { useNavigate } from "react-router-dom";
 export default function PageBack() {
   const navigate = useNavigate();
   return (
-    <button
-      type="button"
-      className="icon-btn"
-      onClick={() => navigate("/")}
+    <IconBtn
+      icon={<IconBack size={15} />}
       title="返回主界面"
-      aria-label="返回主界面"
-    >
-      <svg
-        width="15"
-        height="15"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden
-      >
-        <path d="M19 12H5" />
-        <path d="m12 19-7-7 7-7" />
-      </svg>
-    </button>
+      onClick={() => navigate("/")}
+    />
   );
 }

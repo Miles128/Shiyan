@@ -12,7 +12,9 @@ pub(crate) const TRUST_RSS_FULLTEXT_CHARS: usize = 2000;
 #[cfg(test)]
 pub(crate) const MIN_IMPORTED_BODY_CHARS: usize = 400;
 
-static RE_TAG_STRIP: LazyLock<regex::Regex> =
+/// Shared with `extract::html_to_text`, which falls back to a tag strip when
+/// `html2text` cannot parse the page.
+pub(crate) static RE_TAG_STRIP: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"<[^>]+>").unwrap());
 static RE_FOOTNOTE_DEF: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"(?m)^\[\d+\]:\s+\S+\s*$").unwrap());

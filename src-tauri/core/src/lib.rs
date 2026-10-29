@@ -12,6 +12,7 @@
 //! `feeds` refresh/enrich entry points and `translate::translate_full_article`),
 //! never through an `AppHandle`.
 
+pub mod apple_translate;
 pub mod article_view;
 pub mod books;
 pub mod config;

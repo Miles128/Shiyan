@@ -4,6 +4,7 @@ import { api, FeedSource, ImportedBook } from "../api";
 import { useFeeds, useFilters } from "../store";
 import BookSearchDialog from "./BookSearchDialog";
 import { useToast } from "./Toaster";
+import IconBtn from "./IconBtn";
 
 /**
  * Settings → 书籍. Book download/import is deliberately separate from the RSS
@@ -98,16 +99,14 @@ export default function BooksSection() {
             >
               打开
             </button>
-            <button
-              type="button"
-              className="icon-btn feed-delete"
+            <IconBtn
+              className="feed-delete"
+              icon="✕"
               title="删除书籍"
-              aria-label={`删除书籍 ${book.name}`}
+              label={`删除书籍 ${book.name}`}
               disabled={deleting === book.id}
               onClick={() => void onDelete(book)}
-            >
-              ✕
-            </button>
+            />
           </li>
         ))}
       </ul>

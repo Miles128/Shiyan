@@ -1,13 +1,11 @@
 //! Fetching a public article page and extracting title + main text.
 
-use super::filters::{body_defect, looks_like_paywall};
+use super::filters::{body_defect, looks_like_paywall, RE_TAG_STRIP};
 use super::net::{ensure_public_http_url, read_limited_bytes};
 use crate::error::AppError;
 use reqwest::blocking::Client;
 use std::sync::LazyLock;
 
-static RE_TAG_STRIP: LazyLock<regex::Regex> =
-    LazyLock::new(|| regex::Regex::new(r"<[^>]+>").unwrap());
 static RE_TRAILING_WS: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"[ \t]+\n").unwrap());
 static RE_BLANK_RUN: LazyLock<regex::Regex> =

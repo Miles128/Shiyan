@@ -13,12 +13,23 @@ type Args = {
   onComplete: () => void;
 };
 
+/// Visible reading time after which a body with no scrollable overflow counts
+/// as read: there is no bottom to scroll to, so the scroll check never fires.
+const SHORT_ARTICLE_MS = 15_000;
+
+/// True when the document actually has content below the fold. A body that
+/// fits (or barely overflows) cannot be "scrolled to the bottom".
+function hasOverflow(): boolean {
+  return document.documentElement.scrollHeight > window.innerHeight + 200;
+}
+
 /**
  * Reading-session bookkeeping, extracted from Reader: accumulated
  * visible+focused dwell time (feeds stats and interest ranking), read-to-the-
  * end detection, and scroll position memory. Owns its refs; the reader only
  * supplies the article id and a completion callback.
  */
+
 export function useReadingSession({ id, view, onComplete }: Args): void {
   const readCompletedRef = useRef(false);
   const atBottomRef = useRef(false);
@@ -48,9 +59,10 @@ export function useReadingSession({ id, view, onComplete }: Args): void {
 
   // Reading-time tracking: flush while the window is visible AND focused,
   // on losing focus/hiding, and on unmount. Capped per flush so sleep/resume
-  // can't inflate it.
+  // can't inflate it. Starts once the body is on screen: the loading shell is
+  // short, and counting it would complete a short article before it renders.
   useEffect(() => {
-    if (!id) return;
+    if (!id || view !== "ready") return;
     const dwellMsRef = { current: 0 };
     atBottomRef.current = false;
     readCompletedRef.current = false;
@@ -64,6 +76,11 @@ export function useReadingSession({ id, view, onComplete }: Args): void {
         void api
           .markArticleProgress(id, delta, readCompletedRef.current)
           .catch(() => undefined);
+        // A short body has no bottom to reach; enough visible reading time
+        // is the only completion signal it can produce.
+        if (!hasOverflow() && dwellMsRef.current >= SHORT_ARTICLE_MS) {
+          atBottomRef.current = true;
+        }
         tryComplete();
       }
     };
@@ -88,24 +105,25 @@ export function useReadingSession({ id, view, onComplete }: Args): void {
       window.removeEventListener("focus", onFocus);
       if (!document.hidden && document.hasFocus()) flush();
     };
-  }, [id, tryComplete]);
+  }, [id, tryComplete, view]);
 
-  // Restore the previous scroll offset once the body is on screen.
+  // Restore the previous scroll offset once the body is on screen; an
+  // article without a saved offset starts at the top instead of inheriting
+  // the list's scroll position.
   const restoredRef = useRef<string | null>(null);
   useEffect(() => {
     if (!id || view !== "ready" || restoredRef.current === id) return;
     restoredRef.current = id;
     const y = loadScroll(id);
-    if (y && y > 0) {
-      requestAnimationFrame(() => window.scrollTo({ top: y, behavior: "auto" }));
-    }
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: y && y > 0 ? y : 0, behavior: "auto" });
+    });
   }, [id, view]);
 
-  // Read-to-the-end detection + scroll memory. Gated on the body being on
-  // screen: while the article is still loading the document is short, so
-  // `scrollHeight - 400` is already under the fold — an ungated check
-  // self-completes on mount, latches, and marks every opened article read
-  // before it is actually read. Re-runs when `view` flips to ready.
+  // Read-to-the-end detection + scroll memory. Only a real scroll may complete
+  // an article: the body is short while loading, and a mount-time check used
+  // to mark every opened article read (and a short body satisfies the bottom
+  // condition forever). Short bodies complete through the dwell path above.
   useEffect(() => {
     if (!id) return;
     atBottomRef.current = false;
@@ -118,13 +136,13 @@ export function useReadingSession({ id, view, onComplete }: Args): void {
         lastSaved = now;
         saveScroll(id, window.scrollY);
       }
-      const doc = document.documentElement;
       atBottomRef.current =
-        window.innerHeight + window.scrollY >= doc.scrollHeight - 400;
+        hasOverflow() &&
+        window.innerHeight + window.scrollY >=
+          document.documentElement.scrollHeight - 400;
       if (atBottomRef.current) tryComplete();
     };
     window.addEventListener("scroll", onScroll, { passive: true });
-    onScroll();
     return () => {
       window.removeEventListener("scroll", onScroll);
       saveScroll(id, window.scrollY);

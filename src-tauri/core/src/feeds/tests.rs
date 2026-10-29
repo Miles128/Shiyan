@@ -3,6 +3,117 @@ use super::filters::{
     body_defect, choose_article_body, is_blocked_content, is_readable_article_body,
     looks_truncated, rss_trust_chars, MIN_IMPORTED_BODY_CHARS, TRUST_RSS_FULLTEXT_CHARS,
 };
+use std::io::{Read, Write};
+use std::net::TcpListener;
+use std::path::PathBuf;
+
+struct TestReq<'a> {
+    port: u16,
+    path: &'a str,
+    head: &'a str,
+    index: usize,
+}
+
+/// Loopback HTTP stub: accepts exactly `count` connections and writes whatever
+/// `reply` returns. A request beyond `count` is refused, so an unexpected extra
+/// fetch fails fast instead of hanging the test.
+fn test_server<F>(count: usize, reply: F) -> (u16, std::thread::JoinHandle<()>)
+where
+    F: Fn(TestReq<'_>) -> Vec<u8> + Send + 'static,
+{
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+    let port = listener.local_addr().expect("port").port();
+    let handle = std::thread::spawn(move || {
+        for (index, stream) in listener.incoming().take(count).enumerate() {
+            let mut stream = stream.expect("accept");
+            let mut chunk = [0u8; 8192];
+            let mut head = Vec::new();
+            loop {
+                let n = stream.read(&mut chunk).expect("read request");
+                if n == 0 {
+                    break;
+                }
+                head.extend_from_slice(&chunk[..n]);
+                if head.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let head = String::from_utf8_lossy(&head).into_owned();
+            let path = head
+                .lines()
+                .next()
+                .unwrap_or("")
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or("/")
+                .to_string();
+            let req = TestReq {
+                port,
+                path: &path,
+                head: &head,
+                index,
+            };
+            let _ = stream.write_all(&reply(req));
+        }
+    });
+    (port, handle)
+}
+
+fn http_200(content_type: &str, body: &str) -> Vec<u8> {
+    format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .into_bytes()
+}
+
+fn english_prose(sentences: usize) -> String {
+    "The quick brown fox jumps over the lazy dog near the quiet river bank. ".repeat(sentences)
+}
+
+/// Temp app-data folder holding one subscribed feed, with every curated seed
+/// disabled so a refresh only touches the fixture.
+struct FeedFixture {
+    dir: PathBuf,
+    db: Option<crate::db::DbState>,
+}
+
+impl FeedFixture {
+    fn new(tag: &str, name: &str, port: u16) -> Self {
+        let dir = std::env::temp_dir().join(format!("shiyan-{tag}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = crate::db::DbState::open(crate::db::db_path(dir.clone())).unwrap();
+        {
+            let conn = db.lock_write().unwrap();
+            let mine = crate::db::subscribe_feed(
+                &conn,
+                name,
+                "tech",
+                &format!("http://127.0.0.1:{port}/feed.xml"),
+                "integration fixture",
+            )
+            .unwrap();
+            for feed in crate::db::list_feeds(&conn).unwrap() {
+                if feed.id != mine.id {
+                    crate::db::set_feed_enabled(&conn, &feed.id, false).unwrap();
+                }
+            }
+        }
+        Self { dir, db: Some(db) }
+    }
+
+    fn state(&self) -> &crate::db::DbState {
+        self.db.as_ref().unwrap()
+    }
+}
+
+impl Drop for FeedFixture {
+    fn drop(&mut self) {
+        // Close the connections before unlinking the folder.
+        self.db.take();
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
 
 #[test]
 fn blocks_link_roundups_and_transcripts() {
@@ -64,20 +175,9 @@ fn loopback_allowed_for_tests_only() {
 /// The shared client must refuse the hop instead of following it.
 #[test]
 fn redirect_to_blocked_host_is_rejected() {
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
-    let port = listener.local_addr().expect("port").port();
-    let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("accept");
-        let mut buf = [0u8; 1024];
-        let _ = stream.read(&mut buf);
-        stream
-            .write_all(
-                b"HTTP/1.1 302 Found\r\nLocation: http://169.254.169.254/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-            )
-            .expect("write 302");
+    let (port, server) = test_server(1, |_| {
+        b"HTTP/1.1 302 Found\r\nLocation: http://169.254.169.254/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            .to_vec()
     });
     let err = net::http_client()
         .expect("http client")
@@ -96,21 +196,8 @@ fn redirect_to_blocked_host_is_rejected() {
 /// A server advertising a gigabyte body is rejected before reading anything.
 #[test]
 fn oversized_content_length_is_rejected() {
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
-    let port = listener.local_addr().expect("port").port();
-    let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("accept");
-        let mut buf = [0u8; 1024];
-        let _ = stream.read(&mut buf);
-        stream
-            .write_all(
-                b"HTTP/1.1 200 OK\r\nContent-Length: 1073741824\r\nConnection: close\r\n\r\n",
-            )
-            .expect("write headers");
-        // Client must already have errored; the unread body is never sent.
+    let (port, server) = test_server(1, |_| {
+        b"HTTP/1.1 200 OK\r\nContent-Length: 1073741824\r\nConnection: close\r\n\r\n".to_vec()
     });
     let resp = net::http_client()
         .expect("http client")
@@ -127,23 +214,15 @@ fn oversized_content_length_is_rejected() {
 /// A server lying about its length (chunked, endless body) is cut off mid-stream.
 #[test]
 fn lying_chunked_body_is_cut_off() {
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
-    let port = listener.local_addr().expect("port").port();
-    let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("accept");
-        let mut buf = [0u8; 1024];
-        let _ = stream.read(&mut buf);
-        stream
-            .write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n")
-            .expect("write headers");
+    let (port, server) = test_server(1, |_| {
+        let mut out =
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n".to_vec();
         // One chunk just over the cap.
         let chunk = vec![b'x'; net::MAX_RESPONSE_BYTES + 1];
-        let _ = stream.write_all(format!("{:x}\r\n", chunk.len()).as_bytes());
-        let _ = stream.write_all(&chunk);
-        let _ = stream.write_all(b"\r\n0\r\n\r\n");
+        out.extend_from_slice(format!("{:x}\r\n", chunk.len()).as_bytes());
+        out.extend_from_slice(&chunk);
+        out.extend_from_slice(b"\r\n0\r\n\r\n");
+        out
     });
     let resp = net::http_client()
         .expect("http client")
@@ -162,31 +241,8 @@ fn lying_chunked_body_is_cut_off() {
 /// page fetch, and ETag/304 makes the second refresh a no-op.
 #[test]
 fn refresh_ingests_feed_and_honors_etag() {
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-
     // ~700 English words: clears both the RSS-trust and word-count gates.
-    let prose: String = (0..50)
-        .map(|_| "The quick brown fox jumps over the lazy dog near the quiet river bank. ")
-        .collect();
-
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
-    let port = listener.local_addr().expect("port").port();
-    let now = chrono::Utc::now().to_rfc2822();
-    let feed_xml = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
-         <rss version=\"2.0\" xmlns:content=\"http://purl.org/rss/1.0/modules/content/\">\n\
-         <channel><title>Test Feed</title><link>http://127.0.0.1:{port}/</link>\
-         <description>test</description>\n\
-         <item><title>Longform One</title><link>http://127.0.0.1:{port}/p1</link>\
-         <guid isPermaLink=\"false\">test-p1</guid><pubDate>{now}</pubDate>\
-         <description>A long story.</description>\
-         <content:encoded><![CDATA[<p>{prose}</p>]]></content:encoded></item>\n\
-         <item><title>Short Two</title><link>http://127.0.0.1:{port}/p2</link>\
-         <guid isPermaLink=\"false\">test-p2</guid><pubDate>{now}</pubDate>\
-         <description>A short teaser.</description></item>\n\
-         </channel></rss>"
-    );
+    let prose = english_prose(50);
     let article_html = format!(
         "<html><head><title>Short Two</title></head>\
          <body><article><h1>Short Two</h1><p>{prose}</p><p>{prose}</p></article></body></html>"
@@ -194,77 +250,50 @@ fn refresh_ingests_feed_and_honors_etag() {
     // Exactly 3 requests: /feed.xml + /p2 on refresh 1, /feed.xml (304) on
     // refresh 2. Extra requests would fail fast (connection refused) rather
     // than hang the test.
-    let server = std::thread::spawn(move || {
-        for stream in listener.incoming().take(3) {
-            let mut stream = stream.expect("accept");
-            let mut buf = vec![0u8; 8192];
-            let mut head = Vec::new();
-            loop {
-                let n = stream.read(&mut buf).expect("read request");
-                if n == 0 {
-                    break;
-                }
-                head.extend_from_slice(&buf[..n]);
-                if head.windows(4).any(|w| w == b"\r\n\r\n") {
-                    break;
-                }
-            }
-            let head = String::from_utf8_lossy(&head);
-            let path = head
-                .lines()
-                .next()
-                .unwrap_or("")
-                .split_whitespace()
-                .nth(1)
-                .unwrap_or("/");
-            let etag_match = head
-                .lines()
-                .any(|l| l.to_ascii_lowercase().starts_with("if-none-match:") && l.contains("test-etag-1"));
-            let (status, body, content_type) = if path == "/feed.xml" && etag_match {
-                ("HTTP/1.1 304 Not Modified", String::new(), "application/rss+xml")
-            } else if path == "/feed.xml" {
-                ("HTTP/1.1 200 OK", feed_xml.clone(), "application/rss+xml")
-            } else if path == "/p2" {
-                ("HTTP/1.1 200 OK", article_html.clone(), "text/html")
-            } else {
-                ("HTTP/1.1 404 Not Found", String::new(), "text/plain")
-            };
-            let _ = stream.write_all(
-                format!(
-                    "{status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nETag: test-etag-1\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                )
-                .as_bytes(),
-            );
+    let (port, server) = test_server(3, move |req| {
+        let now = chrono::Utc::now().to_rfc2822();
+        let feed_xml = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+             <rss version=\"2.0\" xmlns:content=\"http://purl.org/rss/1.0/modules/content/\">\n\
+             <channel><title>Test Feed</title><link>http://127.0.0.1:{}/</link>\
+             <description>test</description>\n\
+             <item><title>Longform One</title><link>http://127.0.0.1:{}/p1</link>\
+             <guid isPermaLink=\"false\">test-p1</guid><pubDate>{now}</pubDate>\
+             <description>A long story.</description>\
+             <content:encoded><![CDATA[<p>{prose}</p>]]></content:encoded></item>\n\
+             <item><title>Short Two</title><link>http://127.0.0.1:{}/p2</link>\
+             <guid isPermaLink=\"false\">test-p2</guid><pubDate>{now}</pubDate>\
+             <description>A short teaser.</description></item>\n\
+             </channel></rss>",
+            req.port, req.port, req.port
+        );
+        let etag_match = req.head.lines().any(|l| {
+            l.to_ascii_lowercase().starts_with("if-none-match:") && l.contains("test-etag-1")
+        });
+        if req.path == "/feed.xml" && etag_match {
+            return b"HTTP/1.1 304 Not Modified\r\nContent-Type: application/rss+xml\r\nContent-Length: 0\r\nETag: test-etag-1\r\nConnection: close\r\n\r\n"
+                .to_vec();
         }
+        let (status, content_type, body) = match req.path {
+            "/feed.xml" => ("HTTP/1.1 200 OK", "application/rss+xml", feed_xml),
+            "/p2" => ("HTTP/1.1 200 OK", "text/html", article_html.clone()),
+            _ => ("HTTP/1.1 404 Not Found", "text/plain", String::new()),
+        };
+        format!(
+            "{status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nETag: test-etag-1\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .into_bytes()
     });
 
-    let dir = std::env::temp_dir().join(format!("shiyan-refresh-it-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let db = crate::db::DbState::open(crate::db::db_path(dir.clone())).unwrap();
-    {
-        let conn = db.lock_write().unwrap();
-        let test_feed = crate::db::subscribe_feed(
-            &conn,
-            "Test Feed",
-            "tech",
-            &format!("http://127.0.0.1:{port}/feed.xml"),
-            "integration fixture",
-        )
-        .unwrap();
-        // Opening the DB seeds ~80 curated feeds (all enabled). Refresh would
-        // then crawl the real internet — disable everything but the fixture.
-        for feed in crate::db::list_feeds(&conn).unwrap() {
-            if feed.id != test_feed.id {
-                crate::db::set_feed_enabled(&conn, &feed.id, false).unwrap();
-            }
-        }
-    }
+    // Opening the DB seeds ~80 curated feeds (all enabled); the fixture
+    // disables everything but its own source.
+    let fixture = FeedFixture::new("refresh-it", "Test Feed", port);
     // No API key in tests: card/tag enrichment must no-op instead of failing.
     let cfg = crate::config::AppConfig::default();
     assert!(cfg.api_key.trim().is_empty());
 
-    let first = refresh_feeds(&db, &cfg, |_: RefreshProgress| {}).expect("refresh 1");
+    let first = refresh_feeds(fixture.state(), &cfg, |_: RefreshProgress| {}).expect("refresh 1");
     // No API key in tests: card/tag enrichment reports errors but must not
     // block ingestion.
     assert!(
@@ -275,7 +304,7 @@ fn refresh_ingests_feed_and_honors_etag() {
     assert_eq!(first.added_or_updated, 2, "both items ingested");
     assert_eq!(first.feeds_unchanged, 0);
     {
-        let conn = db.lock_read().unwrap();
+        let conn = fixture.state().lock_read().unwrap();
         assert_eq!(crate::db::list_article_urls(&conn).unwrap().len(), 2);
         let feeds = crate::db::list_feeds(&conn).unwrap();
         let enabled: Vec<_> = feeds.iter().filter(|f| f.enabled).collect();
@@ -283,7 +312,7 @@ fn refresh_ingests_feed_and_honors_etag() {
         assert_eq!(enabled[0].etag, "test-etag-1", "ETag persisted");
     }
 
-    let second = refresh_feeds(&db, &cfg, |_: RefreshProgress| {}).expect("refresh 2");
+    let second = refresh_feeds(fixture.state(), &cfg, |_: RefreshProgress| {}).expect("refresh 2");
     assert!(
         second.errors.iter().all(|e| e.contains("API Key")),
         "only no-key enrichment errors allowed: {:?}",
@@ -292,7 +321,6 @@ fn refresh_ingests_feed_and_honors_etag() {
     assert_eq!(second.feeds_unchanged, 1, "304 makes refresh a no-op");
     assert_eq!(second.added_or_updated, 0);
     server.join().expect("server thread");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A feed body that grows must still upgrade an article already in the library,
@@ -301,86 +329,35 @@ fn refresh_ingests_feed_and_honors_etag() {
 /// break, so it is pinned here rather than left to the unit test of the bound.
 #[test]
 fn known_url_upgrade_survives_the_length_shortcut() {
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
-
-    let line = "The quick brown fox jumps over the lazy dog near the quiet river bank. ";
-    let short_body: String = line.repeat(45);
-    let long_body: String = line.repeat(90);
-
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
-    let port = listener.local_addr().expect("port").port();
-    let now = chrono::Utc::now().to_rfc2822();
+    let short_body = english_prose(45);
+    let long_body = english_prose(90);
 
     // Three feed fetches, no ETag: the second serves a longer body, the third
     // goes back to the shorter one. No page fetches are expected, because every
     // body clears the RSS-trust bar.
-    let calls = Arc::new(AtomicUsize::new(0));
-    let server_calls = Arc::clone(&calls);
-    let server = std::thread::spawn(move || {
-        let feed_xml = |prose: &str| {
-            format!(
-                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
-                 <rss version=\"2.0\" xmlns:content=\"http://purl.org/rss/1.0/modules/content/\">\n\
-                 <channel><title>Growth Feed</title><link>http://127.0.0.1:{port}/</link>\
-                 <description>test</description>\n\
-                 <item><title>Story That Grows</title><link>http://127.0.0.1:{port}/p1</link>\
-                 <guid isPermaLink=\"false\">growth-p1</guid><pubDate>{now}</pubDate>\
-                 <description>A long story.</description>\
-                 <content:encoded><![CDATA[<p>{prose}</p>]]></content:encoded></item>\n\
-                 </channel></rss>"
-            )
+    let (port, server) = test_server(3, move |req| {
+        let prose = if req.index == 1 {
+            &long_body
+        } else {
+            &short_body
         };
-        for stream in listener.incoming().take(3) {
-            let mut stream = stream.expect("accept");
-            let mut buf = vec![0u8; 8192];
-            let mut head = Vec::new();
-            loop {
-                let n = stream.read(&mut buf).expect("read request");
-                if n == 0 {
-                    break;
-                }
-                head.extend_from_slice(&buf[..n]);
-                if head.windows(4).any(|w| w == b"\r\n\r\n") {
-                    break;
-                }
-            }
-            let n = server_calls.fetch_add(1, Ordering::SeqCst);
-            let body = match n {
-                1 => feed_xml(&long_body),
-                _ => feed_xml(&short_body),
-            };
-            let _ = stream.write_all(
-                format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/rss+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                )
-                .as_bytes(),
-            );
-        }
+        let now = chrono::Utc::now().to_rfc2822();
+        let feed_xml = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+             <rss version=\"2.0\" xmlns:content=\"http://purl.org/rss/1.0/modules/content/\">\n\
+             <channel><title>Growth Feed</title><link>http://127.0.0.1:{}/</link>\
+             <description>test</description>\n\
+             <item><title>Story That Grows</title><link>http://127.0.0.1:{}/p1</link>\
+             <guid isPermaLink=\"false\">growth-p1</guid><pubDate>{now}</pubDate>\
+             <description>A long story.</description>\
+             <content:encoded><![CDATA[<p>{prose}</p>]]></content:encoded></item>\n\
+             </channel></rss>",
+            req.port, req.port
+        );
+        http_200("application/rss+xml", &feed_xml)
     });
 
-    let dir = std::env::temp_dir().join(format!("shiyan-upgrade-it-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let db = crate::db::DbState::open(crate::db::db_path(dir.clone())).unwrap();
-    {
-        let conn = db.lock_write().unwrap();
-        let test_feed = crate::db::subscribe_feed(
-            &conn,
-            "Growth Feed",
-            "tech",
-            &format!("http://127.0.0.1:{port}/feed.xml"),
-            "integration fixture",
-        )
-        .unwrap();
-        for feed in crate::db::list_feeds(&conn).unwrap() {
-            if feed.id != test_feed.id {
-                crate::db::set_feed_enabled(&conn, &feed.id, false).unwrap();
-            }
-        }
-    }
+    let fixture = FeedFixture::new("upgrade-it", "Growth Feed", port);
     let cfg = crate::config::AppConfig::default();
     let stored_len = |db: &crate::db::DbState| -> usize {
         let conn = db.lock_read().unwrap();
@@ -391,25 +368,28 @@ fn known_url_upgrade_survives_the_length_shortcut() {
             .sum()
     };
 
-    let first = refresh_feeds(&db, &cfg, |_: RefreshProgress| {}).expect("refresh 1");
+    let first = refresh_feeds(fixture.state(), &cfg, |_: RefreshProgress| {}).expect("refresh 1");
     assert_eq!(first.added_or_updated, 1, "the story is ingested once");
-    let baseline = stored_len(&db);
+    let baseline = stored_len(fixture.state());
 
-    let second = refresh_feeds(&db, &cfg, |_: RefreshProgress| {}).expect("refresh 2");
+    let second = refresh_feeds(fixture.state(), &cfg, |_: RefreshProgress| {}).expect("refresh 2");
     assert_eq!(second.updated, 1, "a longer feed body must upgrade the row");
     assert!(
-        stored_len(&db) > baseline,
+        stored_len(fixture.state()) > baseline,
         "the upgrade has to actually land"
     );
-    let grown = stored_len(&db);
+    let grown = stored_len(fixture.state());
 
-    let third = refresh_feeds(&db, &cfg, |_: RefreshProgress| {}).expect("refresh 3");
+    let third = refresh_feeds(fixture.state(), &cfg, |_: RefreshProgress| {}).expect("refresh 3");
     assert_eq!(third.updated, 0, "a shorter body must not rewrite the row");
     assert_eq!(third.added_or_updated, 0);
-    assert_eq!(stored_len(&db), grown, "the library never shrinks");
+    assert_eq!(
+        stored_len(fixture.state()),
+        grown,
+        "the library never shrinks"
+    );
 
     server.join().expect("server thread");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 fn dummy_feed(id: &str, enabled: bool) -> crate::db::FeedSource {
@@ -438,63 +418,29 @@ fn select_enabled_uses_db_flag_only() {
 /// Progress events must carry a live article count, not just source counts.
 #[test]
 fn refresh_progress_reports_article_count() {
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-
-    let prose: String = (0..50)
-        .map(|_| "The quick brown fox jumps over the lazy dog near the quiet river bank. ")
-        .collect();
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
-    let port = listener.local_addr().expect("port").port();
-    let now = chrono::Utc::now().to_rfc2822();
-    let feed_xml = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
-         <rss version=\"2.0\" xmlns:content=\"http://purl.org/rss/1.0/modules/content/\">\n\
-         <channel><title>Count Feed</title><link>http://127.0.0.1:{port}/</link>\
-         <description>test</description>\n\
-         <item><title>Counted Story</title><link>http://127.0.0.1:{port}/p1</link>\
-         <guid isPermaLink=\"false\">count-p1</guid><pubDate>{now}</pubDate>\
-         <description>A long story.</description>\
-         <content:encoded><![CDATA[<p>{prose}</p>]]></content:encoded></item>\n\
-         </channel></rss>"
-    );
-    let server = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().expect("accept");
-        let mut buf = [0u8; 8192];
-        let _ = stream.read(&mut buf);
-        let _ = stream.write_all(
-            format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/rss+xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                feed_xml.len(),
-                feed_xml
-            )
-            .as_bytes(),
+    let prose = english_prose(50);
+    let (port, server) = test_server(1, move |req| {
+        let now = chrono::Utc::now().to_rfc2822();
+        let feed_xml = format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+             <rss version=\"2.0\" xmlns:content=\"http://purl.org/rss/1.0/modules/content/\">\n\
+             <channel><title>Count Feed</title><link>http://127.0.0.1:{}/</link>\
+             <description>test</description>\n\
+             <item><title>Counted Story</title><link>http://127.0.0.1:{}/p1</link>\
+             <guid isPermaLink=\"false\">count-p1</guid><pubDate>{now}</pubDate>\
+             <description>A long story.</description>\
+             <content:encoded><![CDATA[<p>{prose}</p>]]></content:encoded></item>\n\
+             </channel></rss>",
+            req.port, req.port
         );
+        http_200("application/rss+xml", &feed_xml)
     });
 
-    let dir = std::env::temp_dir().join(format!("shiyan-progress-it-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let db = crate::db::DbState::open(crate::db::db_path(dir.clone())).unwrap();
-    {
-        let conn = db.lock_write().unwrap();
-        let test_feed = crate::db::subscribe_feed(
-            &conn,
-            "Count Feed",
-            "tech",
-            &format!("http://127.0.0.1:{port}/feed.xml"),
-            "progress fixture",
-        )
-        .unwrap();
-        for feed in crate::db::list_feeds(&conn).unwrap() {
-            if feed.id != test_feed.id {
-                crate::db::set_feed_enabled(&conn, &feed.id, false).unwrap();
-            }
-        }
-    }
+    let fixture = FeedFixture::new("progress-it", "Count Feed", port);
     let cfg = crate::config::AppConfig::default();
 
     let (tx, rx) = std::sync::mpsc::channel::<RefreshProgress>();
-    refresh_feeds(&db, &cfg, move |p| {
+    refresh_feeds(fixture.state(), &cfg, move |p| {
         let _ = tx.send(p);
     })
     .expect("refresh");
@@ -514,7 +460,6 @@ fn refresh_progress_reports_article_count() {
     );
 
     server.join().expect("server thread");
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -662,30 +607,30 @@ fn truncated_tails_force_page_fetch() {
 }
 
 #[test]
-fn english_lang_tags() {
-    assert!(super::filters::is_english_lang_tag("en"));
-    assert!(super::filters::is_english_lang_tag("en-US"));
-    assert!(super::filters::is_english_lang_tag("EN_GB"));
-    assert!(!super::filters::is_english_lang_tag("zh-CN"));
-    assert!(!super::filters::is_english_lang_tag("ja"));
-    assert!(!super::filters::is_english_lang_tag("pt-BR"));
-}
+fn english_gate_checks_lang_tag_and_content() {
+    for tag in ["en", "en-US", "EN_GB"] {
+        assert!(
+            super::filters::is_english_lang_tag(tag),
+            "{tag} should pass the tag gate"
+        );
+    }
+    for tag in ["zh-CN", "ja", "pt-BR"] {
+        assert!(
+            !super::filters::is_english_lang_tag(tag),
+            "{tag} should fail the tag gate"
+        );
+    }
 
-#[test]
-fn rejects_chinese_content() {
-    let title = "如何学习 Rust 编程语言入门指南";
-    let content = "今天我们来讨论如何高效学习一门新的编程语言。首先需要理解基本概念，然后通过大量练习巩固知识。".repeat(5);
-    assert!(!is_english_article(None, title, &content));
-    assert!(!is_english_article(Some("zh-CN"), "Anything", &content));
-}
+    let zh_title = "如何学习 Rust 编程语言入门指南";
+    let zh = "今天我们来讨论如何高效学习一门新的编程语言。首先需要理解基本概念，然后通过大量练习巩固知识。".repeat(5);
+    assert!(!is_english_article(None, zh_title, &zh));
+    assert!(!is_english_article(Some("zh-CN"), "Anything", &zh));
 
-#[test]
-fn accepts_english_content() {
-    let title = "How to learn Rust effectively";
-    let content = "Today we discuss how to learn a new programming language effectively. First understand the fundamentals, then practice with real projects until the ideas stick.".repeat(3);
-    assert!(is_english_article(None, title, &content));
-    assert!(is_english_article(Some("en-US"), title, &content));
-    assert!(!is_english_article(Some("fr"), title, &content));
+    let en_title = "How to learn Rust effectively";
+    let en = "Today we discuss how to learn a new programming language effectively. First understand the fundamentals, then practice with real projects until the ideas stick.".repeat(3);
+    assert!(is_english_article(None, en_title, &en));
+    assert!(is_english_article(Some("en-US"), en_title, &en));
+    assert!(!is_english_article(Some("fr"), en_title, &en));
 }
 
 #[test]
@@ -695,39 +640,33 @@ fn title_parses_html_title() {
 }
 
 #[test]
-fn skips_rss_summary_when_page_fetch_fails() {
-    // Mid-length teaser (≥ old 400 threshold) must not be kept if page is unavailable
-    // (anti-crawl / paywall / short extract).
+fn body_choice_prefers_page_fulltext_and_trusts_long_rss() {
+    // Mid-length teaser (≥ old 400 threshold) must not be kept if the page is
+    // unavailable (anti-crawl / paywall / short extract).
     let teaser = "a".repeat(500);
     assert!(teaser.chars().count() >= MIN_IMPORTED_BODY_CHARS);
     assert!(teaser.chars().count() < TRUST_RSS_FULLTEXT_CHARS);
     assert!(choose_article_body(&teaser, None).is_none());
     assert!(choose_article_body(&teaser, Some("too short")).is_none());
-}
+    assert!(is_summary_only_body(&teaser));
+    assert!(is_summary_only_body("short"));
 
-#[test]
-fn accepts_page_fulltext_over_rss_teaser() {
-    let teaser = "teaser ".repeat(80); // ~560 chars
-    let full = "full article body here ".repeat(140); // 560 words
-    assert!(full.split_whitespace().count() >= MIN_ARTICLE_WORDS);
-    let chosen = choose_article_body(&teaser, Some(&full)).expect("page body");
-    assert_eq!(chosen, full);
-}
-
-#[test]
-fn trusts_long_rss_fulltext_without_page() {
+    // A long RSS body is trusted without a page fetch.
     let full_rss = "word ".repeat(500); // 2500 chars
     assert!(full_rss.chars().count() >= TRUST_RSS_FULLTEXT_CHARS);
-    let chosen = choose_article_body(&full_rss, None).expect("rss full text");
-    assert_eq!(chosen, full_rss);
-}
+    assert_eq!(
+        choose_article_body(&full_rss, None).as_deref(),
+        Some(full_rss.as_str())
+    );
+    assert!(!is_summary_only_body(&full_rss));
 
-#[test]
-fn summary_only_body_matches_choose_without_page() {
-    let teaser = "a".repeat(500);
-    assert!(is_summary_only_body(&teaser));
-    assert!(!is_summary_only_body(&"word ".repeat(500)));
-    assert!(is_summary_only_body("short"));
+    // A page body wins over an RSS teaser.
+    let page = "full article body here ".repeat(140); // 560 words
+    assert!(page.split_whitespace().count() >= MIN_ARTICLE_WORDS);
+    assert_eq!(
+        choose_article_body(&teaser, Some(&page)).as_deref(),
+        Some(page.as_str())
+    );
 }
 
 fn chrome_nav_soup() -> String {
@@ -792,51 +731,6 @@ fn short_real_prose_is_importable_but_not_auto_ingested() {
     assert!(body_defect(&post).is_none(), "nothing wrong with its shape");
     assert!(!is_readable_article_body(&post), "under the word bar");
     assert!(choose_article_body("teaser", Some(&post)).is_none());
-}
-
-/// Print what the real extractor gets for a list of URLs, beside what the raw
-/// page holds. Used to tell "the source has no article" apart from "we threw
-/// most of it away". Reads URLs from `SHIYAN_PROBE_FILE`, one per line.
-#[test]
-#[ignore = "对指定 URL 跑真实抽取器，只在人工核对丢文原因时执行"]
-fn probe_extractor_word_counts() {
-    let path = std::env::var("SHIYAN_PROBE_FILE").expect("SHIYAN_PROBE_FILE");
-    let urls = std::fs::read_to_string(&path).expect("read url list");
-    println!("\n抽取正文词数\t整页可见词数\t判定\t链接");
-    for url in urls.lines().map(str::trim).filter(|l| !l.is_empty()) {
-        let client = net::http_client().expect("http client");
-        let whole = extract::extract_page(&client, url)
-            .ok()
-            .map(|p| p.text);
-        let fetched = (|| {
-            let resp = client
-                .get(url)
-                .send()
-                .ok()?
-                .error_for_status()
-                .ok()?;
-            Some(String::from_utf8_lossy(&net::read_limited_bytes(resp).ok()?).into_owned())
-        })();
-        let whole_page = fetched.as_deref().map(html_to_text);
-        let (gotten, page) = match (&whole, &whole_page) {
-            (Some(t), Some(p)) => (
-                t.split_whitespace().count(),
-                p.split_whitespace().count(),
-            ),
-            _ => {
-                println!("-\t-\t页面抓取失败\t{url}");
-                continue;
-            }
-        };
-        let verdict = if gotten >= crate::feeds::MIN_ARTICLE_WORDS {
-            "可入库"
-        } else if page >= crate::feeds::MIN_ARTICLE_WORDS {
-            "被丢，但整页文本够长 → 抽取丢文"
-        } else {
-            "被丢，整页也确实短"
-        };
-        println!("{gotten}\t{page}\t{verdict}\t{url}");
-    }
 }
 
 /// The body choice must keep a real article from readability, and must stop

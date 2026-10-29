@@ -161,6 +161,53 @@ export default function Sidebar({ collapsed, onExpand }: Props) {
   const rssGroups = grouped.filter((g) => g.cat !== "book");
   const bookGroups = grouped.filter((g) => g.cat === "book");
 
+  // RSS and book sources render the exact same tree node; only the book section
+  // sits under a divider and never dims (book feeds are always enabled).
+  function renderGroup(g: SidebarGroup, dimDisabled: boolean) {
+    const isOpen = open[g.cat] !== false;
+    return (
+      <div key={g.cat} className="tree-node">
+        <button
+          type="button"
+          className="tree-branch"
+          onClick={() => toggle(g.cat)}
+          aria-expanded={isOpen}
+        >
+          <span className="tree-sign">{isOpen ? "−" : "+"}</span>
+          <span className="tree-label">{g.label}</span>
+        </button>
+        {isOpen && (
+          <div className="tree-children">
+            {g.feeds.map((f, index) => (
+              <div
+                key={f.id}
+                className={
+                  "tree-leaf" +
+                  (dimDisabled && !f.enabled ? " is-disabled" : "") +
+                  (focusSource === f.name ? " active" : "")
+                }
+                onClick={() => {
+                  if (didDrag.current) {
+                    didDrag.current = false;
+                    return;
+                  }
+                  setFocusSource(focusSource === f.name ? null : f.name);
+                }}
+                onPointerDown={(e) => beginSort(e, g.cat, index)}
+              >
+                <span className="source-dot" style={{ background: dotColor(f.category) }} />
+                <span className="source-name" title={f.name}>
+                  {f.name}
+                </span>
+                <span className="source-count">{f.articleCount}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function commitMove(cat: string, from: number, to: number) {
     const group = grouped.find((g) => g.cat === cat);
     if (!group || from === to) return;
@@ -311,94 +358,12 @@ export default function Sidebar({ collapsed, onExpand }: Props) {
           </button>
         </div>
 
-        {rssGroups.map((g) => (
-          <div key={g.cat} className="tree-node">
-            <button
-              type="button"
-              className="tree-branch"
-              onClick={() => toggle(g.cat)}
-              aria-expanded={open[g.cat] !== false}
-            >
-              <span className="tree-sign">{open[g.cat] !== false ? "−" : "+"}</span>
-              <span className="tree-label">{g.label}</span>
-            </button>
-            {open[g.cat] !== false && (
-              <div className="tree-children">
-                {g.feeds.map((f, index) => (
-                  <div
-                    key={f.id}
-                    className={
-                      "tree-leaf" +
-                      (f.enabled ? "" : " is-disabled") +
-                      (focusSource === f.name ? " active" : "")
-                    }
-                    onClick={() => {
-                      if (didDrag.current) {
-                        didDrag.current = false;
-                        return;
-                      }
-                      setFocusSource(focusSource === f.name ? null : f.name);
-                    }}
-                    onPointerDown={(e) => beginSort(e, g.cat, index)}
-                  >
-                    <span className="source-dot" style={{ background: dotColor(f.category) }} />
-                    <span className="source-name" title={f.name}>
-                      {f.name}
-                    </span>
-                    <span className="source-count">{f.articleCount}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
+        {rssGroups.map((g) => renderGroup(g, true))}
 
         {bookGroups.length > 0 && (
           <>
             <div className="sidebar-divider" role="separator" />
-            {bookGroups.map((g) => (
-              <div key={g.cat} className="tree-node">
-                <button
-                  type="button"
-                  className="tree-branch"
-                  onClick={() => toggle(g.cat)}
-                  aria-expanded={open[g.cat] !== false}
-                >
-                  <span className="tree-sign">{open[g.cat] !== false ? "−" : "+"}</span>
-                  <span className="tree-label">{g.label}</span>
-                </button>
-                {open[g.cat] !== false && (
-                  <div className="tree-children">
-                    {g.feeds.map((f, index) => (
-                      <div
-                        key={f.id}
-                        className={
-                          "tree-leaf" +
-                          (focusSource === f.name ? " active" : "")
-                        }
-                        onClick={() => {
-                          if (didDrag.current) {
-                            didDrag.current = false;
-                            return;
-                          }
-                          setFocusSource(focusSource === f.name ? null : f.name);
-                        }}
-                        onPointerDown={(e) => beginSort(e, g.cat, index)}
-                      >
-                        <span
-                          className="source-dot"
-                          style={{ background: dotColor(f.category) }}
-                        />
-                        <span className="source-name" title={f.name}>
-                          {f.name}
-                        </span>
-                        <span className="source-count">{f.articleCount}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
+            {bookGroups.map((g) => renderGroup(g, false))}
           </>
         )}
       </div>

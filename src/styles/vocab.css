@@ -239,15 +239,6 @@ details.settings-section > summary {
   font-size: 1.05rem;
 }
 
-.feeds-section-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 8px;
-}
-
 .placement-page .placement-actions {
   display: flex;
   gap: 10px;

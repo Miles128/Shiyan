@@ -16,7 +16,6 @@ const RANK_WINDOW: i64 = 800;
 #[tauri::command]
 pub async fn list_rank_window(
     app: AppHandle,
-    category: Option<String>,
     source: Option<String>,
     unread_only: Option<bool>,
     search: Option<String>,
@@ -29,7 +28,7 @@ pub async fn list_rank_window(
         let items = db::query_articles(
             &conn,
             &db::ArticleQuery {
-                category: category.as_deref(),
+                category: None,
                 source: source.as_deref(),
                 read_state: if unread_only.unwrap_or(false) {
                     db::ReadState::Unfinished
@@ -61,10 +60,8 @@ pub async fn list_rank_window(
 
 /// Library listing: every article with the full filter set, newest first.
 #[tauri::command]
-#[allow(clippy::too_many_arguments)]
 pub async fn list_library(
     app: AppHandle,
-    category: Option<String>,
     source: Option<String>,
     read_state: Option<String>,
     liked_only: Option<bool>,
@@ -84,7 +81,7 @@ pub async fn list_library(
         db::query_articles(
             &conn,
             &db::ArticleQuery {
-                category: category.as_deref(),
+                category: None,
                 source: source.as_deref(),
                 read_state,
                 liked_only: liked_only.unwrap_or(false),

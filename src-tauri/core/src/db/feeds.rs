@@ -1,5 +1,5 @@
 use crate::error::AppError;
-use super::{curated_feeds, row_as, FeedCategory, FeedSource};
+use super::{count_map, curated_feeds, row_as, CountMap, FeedCategory, FeedSource};
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
@@ -138,28 +138,17 @@ pub fn set_feed_enabled(conn: &Connection, id: &str, enabled: bool) -> Result<()
 /// Feed display name → user-assigned priority, for the home ranking bonus.
 /// Articles carry a `source` name (not the feed id), so the map is keyed by name.
 /// Only sources with priority > 0 are returned.
-pub fn source_priority_map(
-    conn: &Connection,
-) -> Result<std::collections::HashMap<String, i64>, AppError> {
-    let mut stmt = conn.prepare("SELECT name, priority FROM feed_sources WHERE priority > 0")?;
-    let rows = stmt
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?
-        .collect::<Result<std::collections::HashMap<_, _>, _>>()?;
-    Ok(rows)
+pub fn source_priority_map(conn: &Connection) -> Result<CountMap, AppError> {
+    count_map(conn, "SELECT name, priority FROM feed_sources WHERE priority > 0")
 }
 
 /// Category → highest source priority in that category, the denominator that
 /// normalises the per-category ranking bonus to [0, 1].
-pub fn category_priority_max(
-    conn: &Connection,
-) -> Result<std::collections::HashMap<String, i64>, AppError> {
-    let mut stmt = conn.prepare(
+pub fn category_priority_max(conn: &Connection) -> Result<CountMap, AppError> {
+    count_map(
+        conn,
         "SELECT category, MAX(priority) FROM feed_sources WHERE priority > 0 GROUP BY category",
-    )?;
-    let rows = stmt
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?
-        .collect::<Result<std::collections::HashMap<_, _>, _>>()?;
-    Ok(rows)
+    )
 }
 
 pub fn list_feed_categories(conn: &Connection) -> Result<Vec<FeedCategory>, AppError> {

@@ -2,6 +2,8 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { api, FeedCategory, FeedSource } from "../api";
 import { useFeeds } from "../store";
 import { useToast } from "./Toaster";
+import IconBtn from "./IconBtn";
+import Tabs from "./Tabs";
 
 /** Subscription manager, embedded in the Settings page (订阅 tab). */
 export default function ManageFeeds() {
@@ -129,24 +131,15 @@ export default function ManageFeeds() {
     <div className="feeds-page">
       {error && <p className="banner err">{error}</p>}
 
-      <div className="feeds-cat-row">
-        <button
-          type="button"
-          className={categoryId === "all" ? "tab active" : "tab"}
-          onClick={() => setCategoryId("all")}
-        >
-          全部
-        </button>
-        {rssCategories.map((c) => (
-          <button
-            key={c.id}
-            type="button"
-            className={categoryId === c.id ? "tab active" : "tab"}
-            onClick={() => setCategoryId(c.id)}
-          >
-            {c.label}
-          </button>
-        ))}
+      <Tabs
+        className="feeds-cat-row"
+        items={[
+          ["all", "全部"],
+          ...rssCategories.map((c) => [c.id, c.label] as const),
+        ]}
+        value={categoryId}
+        onChange={setCategoryId}
+      >
         <form className="feeds-cat-add" onSubmit={(e) => void onAddCategory(e)}>
           <input
             value={newCatLabel}
@@ -162,7 +155,7 @@ export default function ManageFeeds() {
             {addingCat ? "添加中…" : "+ 分类"}
           </button>
         </form>
-      </div>
+      </Tabs>
 
       <section className="feeds-drawer-section">
         <h3>我的订阅</h3>
@@ -195,15 +188,13 @@ export default function ManageFeeds() {
                 </div>
               </div>
               {f.origin === "user" && (
-                <button
-                  type="button"
-                  className="icon-btn feed-delete"
+                <IconBtn
+                  className="feed-delete"
+                  icon="✕"
                   title="删除订阅源"
-                  aria-label={`删除订阅源 ${f.name}`}
+                  label={`删除订阅源 ${f.name}`}
                   onClick={() => void onDeleteFeed(f)}
-                >
-                  ✕
-                </button>
+                />
               )}
             </li>
           ))}

@@ -14,7 +14,6 @@ import {
  * repeating the backend's query struct in every caller.
  */
 export type ArticleFilter = {
-  category?: string;
   source?: string;
   limit?: number;
   offset?: number;
@@ -28,7 +27,6 @@ export type ArticleFilter = {
  */
 function filterArgs(filter: ArticleFilter) {
   return {
-    category: filter.category ?? null,
     source: filter.source ?? null,
     limit: filter.limit ?? null,
     offset: filter.offset ?? null,
@@ -49,7 +47,6 @@ export const apiArticles = {
     },
   ): Promise<ArticleListItem[]> => {
     const w = await typedInvoke("list_rank_window", {
-      category: filter.category ?? null,
       source: filter.source ?? null,
       search: filter.search?.trim() ? filter.search.trim() : null,
       unreadOnly: filter.unreadOnly ?? null,

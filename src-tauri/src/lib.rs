@@ -29,6 +29,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::config::get_config,
             commands::config::save_config_cmd,
+            commands::config::translation_engine_status,
             commands::data::backup_database,
             commands::articles::list_rank_window,
             commands::articles::list_library,

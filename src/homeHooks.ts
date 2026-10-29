@@ -78,32 +78,33 @@ export function useArticleBackfill({
 
 /**
  * Infinite scroll: a sentinel near the list bottom triggers `loadMore`.
- * Ref indirection keeps the observer callback on the latest closure.
- * Returns the ref to attach to the sentinel element.
+ * The sentinel only exists in some list modes, so the element is held in state
+ * via a callback ref and observed by identity — a mount-time `ref.current`
+ * read misses it for good when the mode changes later. Ref indirection keeps
+ * the observer callback on the latest closure.
+ * Returns the callback ref to attach to the sentinel element.
  */
 export function useInfiniteScroll(
   hasMore: boolean,
   loadMore: () => void | Promise<void>,
 ) {
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null);
   const loadMoreRef = useRef(loadMore);
   useEffect(() => {
     loadMoreRef.current = loadMore;
   });
   useEffect(() => {
-    if (!hasMore) return;
-    const el = sentinelRef.current;
-    if (!el) return;
+    if (!hasMore || !sentinel) return;
     const io = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) loadMoreRef.current();
       },
       { rootMargin: "600px" },
     );
-    io.observe(el);
+    io.observe(sentinel);
     return () => io.disconnect();
-  }, [hasMore]);
-  return sentinelRef;
+  }, [hasMore, sentinel]);
+  return setSentinel;
 }
 
 type DifficultyOptions = {
