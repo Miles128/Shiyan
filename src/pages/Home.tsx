@@ -159,6 +159,14 @@ export default function Home() {
   const [hasMore, setHasMore] = useState(
     () => (peekQuery<ArticleListItem[]>(listKey)?.length ?? 0) >= PAGE_SIZE,
   );
+  // A new list key asks a different question: rows from the previous key must
+  // not paint under the new heading while the fresh window is in flight.
+  const [articlesKey, setArticlesKey] = useState(listKey);
+  if (articlesKey !== listKey) {
+    setArticlesKey(listKey);
+    setArticles([]);
+    setHasMore(false);
+  }
 
   // Stale-response guard: rapid filter/source changes fire overlapping loads;
   // only the newest call may touch state.
