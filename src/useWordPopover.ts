@@ -51,6 +51,10 @@ export function useWordPopover(config: WordPopoverConfig) {
     async (opts: { text: string; x: number; y: number; bundledZh?: string }) => {
       const { text, x, y, bundledZh } = opts;
       const { term: ruleTerm, source } = prepareLookup(text);
+      // Show the popover before the first dictionary decode: that import parses
+      // a multi-megabyte chunk on the main thread, and leaving the bubble
+      // unmounted until it finishes makes a click look ignored.
+      setPopover({ x, y, text: ruleTerm, source, loading: true });
       let detail: ReturnType<typeof lookupDetail> = null;
       try {
         await ensureDetailsLoaded();

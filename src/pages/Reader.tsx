@@ -330,20 +330,23 @@ export default function Reader() {
     }
   }
 
-  // Stable per-paragraph handlers so `ReaderParagraph(memo)` only re-renders
-  // the paragraph whose props actually changed (TTS/translation toggles no
-  // longer invalidate the whole article via inline closures).
+  // Stable per-paragraph handlers: the rows are memo'd, so handing every row a
+  // fresh closure on each translation/TTS toggle would re-render the whole
+  // article. The latest implementation lives in a ref; clicks land after
+  // commit, so the ref is current by the time it is read.
+  const translateParaRef = useRef(translatePara);
+  const speakParagraphRef = useRef(speakParagraph);
+  useEffect(() => {
+    translateParaRef.current = translatePara;
+    speakParagraphRef.current = speakParagraph;
+  });
   const handleTranslatePara = useCallback(
-    (index: number) => void translatePara(index),
-    // translatePara reads latest id/paragraphs/translations via closure;
-    // re-created when those change, stable across TTS/speaking renders.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [id, paragraphs, translations, visibleParas],
+    (index: number) => void translateParaRef.current(index),
+    [],
   );
   const handleSpeakParagraph = useCallback(
-    (index: number) => speakParagraph(index),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [speaking, speakTarget, paragraphs, startSpeak, stopSpeak],
+    (index: number) => void speakParagraphRef.current(index),
+    [],
   );
 
   const onHardWordClick = useCallback(
