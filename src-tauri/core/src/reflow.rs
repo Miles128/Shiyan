@@ -72,6 +72,61 @@ const CHROME_MARKERS: &[&str] = &[
 
 static RE_LINK_DEF: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?m)^[ \t]*\[(\d{1,4})\]:[ \t]*(\S+)[ \t]*$").unwrap());
+/// A definition whose address was hard-wrapped onto the following line(s):
+/// the HTML→text conversion breaks at ~80 columns, so `[1]: https://…/charg`
+/// continues on the next line with `ed-for-…/`. Matching only the first line
+/// leaves the remainder behind as a line of URL debris in the reader.
+/// Group 2 is the continuation block; lines are re-joined without a separator
+/// because a hard wrap splits mid-token.
+static RE_LINK_DEF_WRAPPED: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?m)^([ \t]*\[\d{1,4}\]:[ \t]*\S+)((?:[ \t]*\n[ \t]*[^\[\s]\S*)+)[ \t]*$",
+    )
+    .unwrap()
+});
+/// A definition marker left with nothing after it (`[2]:`), which happens when
+/// the wrapped URL was already consumed by a neighbouring definition.
+static RE_LINK_DEF_ORPHAN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^[ \t]*\[\d{1,4}\]:[ \t]*$").unwrap());
+
+/// True when a wrapped line is a URL fragment rather than prose. Prose lines
+/// carry spaces; a single token with URL punctuation is a continuation.
+fn url_fragment(line: &str) -> bool {
+    let t = line.trim();
+    !t.is_empty()
+        && !t.contains(char::is_whitespace)
+        && t.chars()
+            .any(|c| matches!(c, '/' | '-' | '_' | '%' | '=' | '#' | '?' | '&' | '.'))
+}
+
+/// True for a block that is nothing but URL debris: every line a single ASCII
+/// token carrying URL punctuation. Wrapped href labels and link-list walls
+/// end up here after the definition block is dropped; no prose looks like
+/// this (a paragraph line has spaces, a real word carries no URL marks).
+fn link_debris_block(block: &str) -> bool {
+    let mut any = false;
+    for line in block.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        any = true;
+        if line.split_whitespace().count() != 1 || line.len() < 8 || !line.is_ascii() {
+            return false;
+        }
+        // `?` and `!` are sentence punctuation too, so only marks that never
+        // end prose (slashes, query/percent syntax) count on their own.
+        let marks = line
+            .chars()
+            .filter(|c| matches!(c, '/' | '%' | '=' | '&' | '_'))
+            .count();
+        if marks == 0 && line.matches('-').count() < 2 {
+            return false;
+        }
+    }
+    any
+}
+
 static RE_REF_LINK: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[([^\]]+)\]\[(\d{1,4})\]").unwrap());
 static RE_IMAGE: LazyLock<Regex> =
@@ -91,6 +146,26 @@ static RE_LINK_ONLY: LazyLock<Regex> =
 /// Idempotent, so it is safe both at ingest and again inside [`reflow`], which
 /// is what lets already-stored articles be cleaned on display.
 pub fn clean_body(text: &str) -> String {
+    // Re-join hard-wrapped definitions before matching. Only fragments that
+    // look like URL tails are consumed; a single-word prose line after a
+    // definition is left alone.
+    let joined = RE_LINK_DEF_WRAPPED.replace_all(text, |c: &regex::Captures| {
+        let mut url = c[1].trim_end().to_string();
+        for line in c[2].lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if !url_fragment(line) {
+                return c[0].to_string();
+            }
+            url.push_str(line);
+        }
+        url
+    });
+    let joined = RE_LINK_DEF_ORPHAN.replace_all(&joined, "").into_owned();
+    let text = joined.as_str();
+
     let mut urls: HashMap<String, String> = HashMap::new();
     for caps in RE_LINK_DEF.captures_iter(text) {
         urls.entry(caps[1].to_string()).or_insert_with(|| caps[2].to_string());
@@ -114,6 +189,9 @@ pub fn clean_body(text: &str) -> String {
         }
         if RE_LINK_ONLY.is_match(trimmed) {
             continue; // a block that is nothing but image/link markup
+        }
+        if link_debris_block(trimmed) {
+            continue; // wrapped href labels / link-list wall
         }
         let words = trimmed.split_whitespace().count();
         if words <= CHROME_MAX_WORDS {
