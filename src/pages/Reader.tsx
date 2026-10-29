@@ -393,6 +393,10 @@ export default function Reader() {
     if (!id) return;
     if (showFullZh) {
       setShowFullZh(false);
+      // Full translation marked every paragraph visible; hiding has to undo
+      // that too, or the `showFullZh || visibleParas[i]` union keeps the
+      // Chinese on screen and the button looks like a no-op.
+      setVisibleParas({});
       return;
     }
     setBusyFull(true);
