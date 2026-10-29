@@ -1,3 +1,4 @@
+use crate::apple_translate;
 use crate::error::AppError;
 use crate::config::AppConfig;
 use crate::db::{self, DbState, MemoryItem};
@@ -46,11 +47,117 @@ struct Message {
     content: Option<String>,
 }
 
-pub fn translate_text(cfg: &AppConfig, text: &str) -> Result<String, AppError> {
+/// Which engine translates the reader text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TranslationEngine {
+    /// macOS system engine when this Mac can serve it, API otherwise.
+    Auto,
+    /// System engine only — article text never leaves the Mac.
+    Apple,
+    /// LLM API only.
+    Api,
+}
+
+/// Read the engine preference from the config. Unknown values behave like
+/// `auto`, so a typo never leaves the reader without translations.
+pub fn translation_engine(cfg: &AppConfig) -> TranslationEngine {
+    match cfg.translation_provider.trim().to_ascii_lowercase().as_str() {
+        "apple" | "system" | "local" => TranslationEngine::Apple,
+        "api" | "llm" => TranslationEngine::Api,
+        _ => TranslationEngine::Auto,
+    }
+}
+
+/// Pick the engine and run it. `api_call` stays lazy so the API is only
+/// touched when the configuration actually selects it.
+fn route_translation(
+    cfg: &AppConfig,
+    texts: &[String],
+    api_call: impl FnOnce() -> Result<Vec<String>, AppError>,
+) -> Result<Vec<String>, AppError> {
+    match translation_engine(cfg) {
+        TranslationEngine::Apple => system_translate(texts),
+        TranslationEngine::Api => api_call(),
+        TranslationEngine::Auto => {
+            if apple_translate::is_available() {
+                match system_translate(texts) {
+                    Ok(out) => Ok(out),
+                    // The system engine failed this round: the reader still
+                    // needs its translation, so fall back when an API is
+                    // configured.
+                    Err(system_err) => {
+                        if ensure_configured(cfg).is_ok() {
+                            api_call()
+                        } else {
+                            Err(system_err)
+                        }
+                    }
+                }
+            } else if ensure_configured(cfg).is_ok() {
+                api_call()
+            } else {
+                Err(AppError::msg(format!(
+                    "{}；也未配置 API Key，无法翻译",
+                    apple_translate::unavailable_detail()
+                )))
+            }
+        }
+    }
+}
+
+/// Translate with the macOS system engine, checking the batch size.
+fn system_translate(texts: &[String]) -> Result<Vec<String>, AppError> {
+    let out = apple_translate::translate_batch(texts)?;
+    if out.len() != texts.len() {
+        return Err(AppError::msg(format!(
+            "系统翻译返回条数不符：{} 条，期望 {} 条",
+            out.len(),
+            texts.len()
+        )));
+    }
+    Ok(out)
+}
+
+/// Translate one passage through the LLM API.
+fn api_translate_one(cfg: &AppConfig, text: &str) -> Result<Vec<String>, AppError> {
     ensure_configured(cfg)?;
     let system = "You are a precise English-to-Simplified-Chinese translator for language learners. Translate faithfully. Output ONLY the Chinese translation, no quotes or commentary.";
     let user = format!("Translate to Simplified Chinese:\n\n{text}");
-    chat(cfg, system, &user)
+    Ok(vec![chat(cfg, system, &user)?])
+}
+
+/// Translate a batch of passages through the LLM API.
+fn api_translate_texts(cfg: &AppConfig, texts: &[String]) -> Result<Vec<String>, AppError> {
+    ensure_configured(cfg)?;
+    let system = r#"You translate English passages to Simplified Chinese for language learners.
+Given a JSON array of English passages, return ONLY a JSON array of Chinese translations in the same order and length.
+Translate faithfully. No markdown fences, no commentary."#;
+    let payload = serde_json::to_string(texts)?;
+    let out: Vec<String> = chat_json_array(cfg, system, &payload, "paragraph translations")?;
+    if out.len() != texts.len() {
+        return Err(AppError::msg(format!(
+            "paragraph translation count mismatch: got {} expected {}",
+            out.len(),
+            texts.len()
+        )));
+    }
+    Ok(out)
+}
+
+pub fn translate_text(cfg: &AppConfig, text: &str) -> Result<String, AppError> {
+    let texts = vec![text.to_string()];
+    let out = route_translation(cfg, &texts, || api_translate_one(cfg, text))?;
+    out.into_iter()
+        .next()
+        .ok_or_else(|| AppError::msg("翻译返回为空"))
+}
+
+/// Translate article paragraphs in batch. Input order must match output order.
+pub fn translate_texts(cfg: &AppConfig, texts: &[String]) -> Result<Vec<String>, AppError> {
+    if texts.is_empty() {
+        return Ok(vec![]);
+    }
+    route_translation(cfg, texts, || api_translate_texts(cfg, texts))
 }
 
 fn strip_fences(raw: &str) -> &str {
@@ -164,27 +271,6 @@ fn chat_json_array<T: for<'de> Deserialize<'de>>(
     label: &str,
 ) -> Result<Vec<T>, AppError> {
     chat_parsed(cfg, system, user, label, |raw| parse_json_array::<T>(raw))
-}
-
-/// Translate article paragraphs in batch. Input order must match output order.
-pub fn translate_texts(cfg: &AppConfig, texts: &[String]) -> Result<Vec<String>, AppError> {
-    if texts.is_empty() {
-        return Ok(vec![]);
-    }
-    ensure_configured(cfg)?;
-    let system = r#"You translate English passages to Simplified Chinese for language learners.
-Given a JSON array of English passages, return ONLY a JSON array of Chinese translations in the same order and length.
-Translate faithfully. No markdown fences, no commentary."#;
-    let payload = serde_json::to_string(texts)?;
-    let out: Vec<String> = chat_json_array(cfg, system, &payload, "paragraph translations")?;
-    if out.len() != texts.len() {
-        return Err(AppError::msg(format!(
-            "paragraph translation count mismatch: got {} expected {}",
-            out.len(),
-            texts.len()
-        )));
-    }
-    Ok(out)
 }
 
 pub const CARD_SUMMARY_MAX_CHARS: usize = 60;
@@ -543,7 +629,8 @@ where
 mod clip_tests {
     use super::{
         backoff_ms, chat_completions_url, clip_zh, is_retryable, parse_json_array,
-        translate_text, with_retry, ArticleCardOut,
+        translate_text, translate_texts, translation_engine, with_retry, ArticleCardOut,
+        TranslationEngine,
     };
     use crate::error::AppError;
 
@@ -594,11 +681,48 @@ mod clip_tests {
         // with an actionable message instead of attempting a request.
         let cfg = crate::config::AppConfig::default();
         assert!(cfg.api_key.trim().is_empty());
+        // Pin the API engine — the default ("auto") may legitimately serve
+        // this from the macOS system engine, which needs no key at all.
+        let cfg = crate::config::AppConfig {
+            translation_provider: "api".into(),
+            ..cfg
+        };
         let err = translate_text(&cfg, "hello").expect_err("must not call LLM without a key");
         assert!(
             err.to_string().contains("API Key"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn engine_follows_the_config() {
+        let base = crate::config::AppConfig::default();
+        let with = |provider: &str| crate::config::AppConfig {
+            translation_provider: provider.into(),
+            ..base.clone()
+        };
+        assert_eq!(translation_engine(&with("apple")), TranslationEngine::Apple);
+        assert_eq!(translation_engine(&with("system")), TranslationEngine::Apple);
+        assert_eq!(translation_engine(&with("api")), TranslationEngine::Api);
+        assert_eq!(translation_engine(&with("llm")), TranslationEngine::Api);
+        assert_eq!(translation_engine(&with("auto")), TranslationEngine::Auto);
+        // Unknown values must not disable translation entirely.
+        assert_eq!(translation_engine(&with("nonsense")), TranslationEngine::Auto);
+        assert_eq!(translation_engine(&with("  Apple ")), TranslationEngine::Apple);
+    }
+
+    #[test]
+    fn api_engine_without_key_refuses_instead_of_calling_out() {
+        let cfg = crate::config::AppConfig {
+            translation_provider: "api".into(),
+            ..crate::config::AppConfig::default()
+        };
+        let err = translate_texts(
+            &cfg,
+            &["hello".to_string(), "world".to_string()],
+        )
+        .expect_err("no key, no request");
+        assert!(err.to_string().contains("API Key"), "unexpected: {err}");
     }
 
     #[test]

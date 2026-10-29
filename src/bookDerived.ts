@@ -46,8 +46,3 @@ export const BOOK_SHELVES: ReadonlyArray<{ value: string; label: string }> = [
   { value: "Essays, Letters & Speeches", label: "随笔" },
   { value: "Science-Fiction & Fantasy", label: "科幻奇幻" },
 ];
-
-/** Human sentence for a finished import, used in the toast. */
-export function importSummary(title: string, chapters: number): string {
-  return `已导入《${title}》·${chapters} 章`;
-}

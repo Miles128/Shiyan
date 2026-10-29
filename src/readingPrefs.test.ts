@@ -44,7 +44,6 @@ describe("resolveReadingPrefs", () => {
   it("defaults to full width so the column tracks the window", () => {
     const resolved = resolveReadingPrefs(defaultReadingPrefs());
     expect(resolved.measure).toBe("100%");
-    expect(resolved.fullWidth).toBe(true);
     expect(resolved.fontSizePx).toBe(18);
     expect(resolved.lineHeight).toBe(1.75);
   });
@@ -52,7 +51,6 @@ describe("resolveReadingPrefs", () => {
   it("maps medium width to the 52rem cap when chosen", () => {
     const resolved = resolveReadingPrefs({ reader_line_width: "medium" });
     expect(resolved.measure).toBe("52rem");
-    expect(resolved.fullWidth).toBe(false);
   });
 
   it("exposes CSS variables", () => {

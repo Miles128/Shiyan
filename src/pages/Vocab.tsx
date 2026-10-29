@@ -4,6 +4,7 @@ import { useAppConfig, useVocab } from "../store";
 import { api } from "../api";
 import { placementSummaryText } from "../placement/engine";
 import MemoryLibrary from "../components/MemoryLibrary";
+import Tabs from "../components/Tabs";
 import PageBack from "../components/PageBack";
 
 type Library = "vocab" | "phrases";
@@ -46,22 +47,14 @@ export default function Vocab() {
       </header>
       {exportMsg && <p className="muted">{exportMsg}</p>}
 
-      <div className="tabs">
-        {(
-          [
-            ["vocab", "生词"],
-            ["phrases", "短语"],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            className={library === id ? "tab active" : "tab"}
-            onClick={() => setLibrary(id)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        items={[
+          ["vocab", "生词"],
+          ["phrases", "短语"],
+        ] as const}
+        value={library}
+        onChange={setLibrary}
+      />
 
       {library === "phrases" ? (
         <MemoryLibrary

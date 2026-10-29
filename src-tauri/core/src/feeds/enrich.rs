@@ -4,7 +4,6 @@ use crate::config::AppConfig;
 use crate::db::{self, DbState};
 use crate::error::AppError;
 use crate::vocab;
-use rusqlite::Connection;
 
 /// Articles per batch LLM request. Big enough to amortise the per-request
 /// overhead; small enough that a retry split stays cheap.
@@ -58,29 +57,31 @@ fn fill_slots<T, O>(
     fill_slots(&items[mid..], job, out, last_err);
 }
 
-/// Shared driver for the two LLM backfills below. It batches the work, halves a
-/// batch when the model answers badly (see [`run_with_split`]), writes back each
+/// Backfill Chinese summaries (`summary_zh`). Batches the work, halves a batch
+/// when the model answers badly (see [`run_with_split`]), writes back each
 /// surviving row, reports progress, and gives up as soon as a whole batch comes
 /// back empty — that means the provider is down or misconfigured, so burning
 /// split-retries on the remaining chunks is pointless.
-///
-/// `write_back` reports whether it actually stored anything; that count is the
-/// job's return value.
-fn run_backfill<O>(
+pub fn fill_missing_card_zh(
     db: &DbState,
     cfg: &AppConfig,
-    label: &str,
-    missing: Vec<db::Article>,
-    mut call: impl FnMut(&[vocab::ArticleCardIn]) -> Result<Vec<O>, AppError>,
-    mut write_back: impl FnMut(&Connection, &db::Article, O) -> Result<bool, AppError>,
+    limit: usize,
     mut on_progress: impl FnMut(usize, usize),
 ) -> Result<usize, AppError> {
     // Fail fast instead of splitting every batch against a dead configuration.
     if cfg.api_key.trim().is_empty() {
         return Err(AppError::msg(
-            "请先在设置中配置 API Key（config.local.json）",
+            if vocab::translation_engine(cfg) == vocab::TranslationEngine::Apple {
+                "标题/简介生成需要 API Key：系统翻译引擎只翻译正文，不做摘要（config.local.json）"
+            } else {
+                "请先在设置中配置 API Key（config.local.json）"
+            },
         ));
     }
+    let missing = {
+        let conn = db.lock_read()?;
+        db::articles_missing_card_zh(&conn, limit)?
+    };
     let total = missing.len();
     if total == 0 {
         on_progress(0, 0);
@@ -98,11 +99,14 @@ fn run_backfill<O>(
             .iter()
             .map(|a| vocab::card_from_article(&a.title, &a.content_text))
             .collect();
+        let mut call = |batch: &[vocab::ArticleCardIn]| {
+            vocab::translate_article_cards(cfg, batch)
+        };
         let (rows, err) = run_with_split(&cards, &mut call);
         let usable = rows.iter().filter(|row| row.is_some()).count();
         if let Some(e) = err {
             last_err = Some(format!(
-                "{label}（第 {}–{} 条）：{e}",
+                "简介（第 {}–{} 条）：{e}",
                 processed + 1,
                 processed + cards.len()
             ));
@@ -110,8 +114,9 @@ fn run_backfill<O>(
         {
             let conn = db.lock_write()?;
             for (article, row) in chunk.iter().zip(rows) {
-                let Some(out) = row else { continue };
-                if write_back(&conn, article, out)? {
+                let Some(card) = row else { continue };
+                if article.summary_zh.is_empty() && !card.summary_zh.is_empty() {
+                    db::set_article_summary_zh(&conn, &article.id, &card.summary_zh)?;
                     done += 1;
                 }
             }
@@ -120,39 +125,11 @@ fn run_backfill<O>(
         on_progress(processed, total);
         if usable == 0 {
             return Err(AppError::msg(
-                last_err.unwrap_or_else(|| format!("{label}生成失败")),
+                last_err.unwrap_or_else(|| "简介生成失败".to_string()),
             ));
         }
     }
     Ok(done)
-}
-
-pub fn fill_missing_card_zh(
-    db: &DbState,
-    cfg: &AppConfig,
-    limit: usize,
-    on_progress: impl FnMut(usize, usize),
-) -> Result<usize, AppError> {
-    let missing = {
-        let conn = db.lock_read()?;
-        db::articles_missing_card_zh(&conn, limit)?
-    };
-    run_backfill(
-        db,
-        cfg,
-        "简介",
-        missing,
-        |batch: &[vocab::ArticleCardIn]| vocab::translate_article_cards(cfg, batch),
-        |conn: &Connection, article: &db::Article, card: vocab::ArticleCardOut| {
-            let wrote_summary =
-                article.summary_zh.is_empty() && !card.summary_zh.is_empty();
-            if wrote_summary {
-                db::set_article_summary_zh(conn, &article.id, &card.summary_zh)?;
-            }
-            Ok(wrote_summary)
-        },
-        on_progress,
-    )
 }
 
 #[cfg(test)]

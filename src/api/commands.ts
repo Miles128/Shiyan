@@ -14,6 +14,7 @@ import type {
   RankWindow,
   ReadingStats,
   RefreshResult,
+  TranslationEngineStatus,
   TranslationRow,
 } from "./types";
 
@@ -40,7 +41,6 @@ export interface Commands {
   // ── articles ──────────────────────────────────────────────────────────
   list_rank_window: {
     args: {
-      category: string | null;
       source: string | null;
       search: string | null;
       unreadOnly: boolean | null;
@@ -49,7 +49,6 @@ export interface Commands {
   };
   list_library: {
     args: {
-      category: string | null;
       source: string | null;
       limit: number | null;
       offset: number | null;
@@ -140,6 +139,7 @@ export interface Commands {
   // ── config ────────────────────────────────────────────────────────────
   get_config: { args: void; ret: AppConfig };
   save_config_cmd: { args: { cfg: AppConfig }; ret: void };
+  translation_engine_status: { args: void; ret: TranslationEngineStatus };
 
   // ── data ──────────────────────────────────────────────────────────────
   backup_database: { args: void; ret: string | null };

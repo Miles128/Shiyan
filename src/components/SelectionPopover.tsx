@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { SpeakTarget } from "../useTts";
-import type { WordDetail } from "../wordResolve";
+import { isPhraseSelection, type WordDetail } from "../wordResolve";
+import IconBtn from "./IconBtn";
 
 export type Popover = {
   x: number;
@@ -17,13 +18,13 @@ export type Popover = {
   error?: string;
 };
 
-type Props = {
+export type SelectionPopoverProps = {
   popover: Popover;
   speaking: boolean;
   speakTarget: SpeakTarget | null;
   onSpeakWord: (text: string) => void;
   onAddVocab: () => void;
-  /** Present for multi-word selections: save into the phrase library. */
+  /** Multi-word selections only: save into the phrase library. */
   onAddPhrase?: () => void;
   onClose: () => void;
 };
@@ -75,8 +76,10 @@ export default function SelectionPopover({
   onAddVocab,
   onAddPhrase,
   onClose,
-}: Props) {
+}: SelectionPopoverProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const isPhrase =
+    popover.source != null && isPhraseSelection(popover.source);
   const [box, setBox] = useState({ w: 280, h: 160 });
   useLayoutEffect(() => {
     const el = ref.current;
@@ -150,37 +153,37 @@ export default function SelectionPopover({
           ) : null}
         </div>
         <div className="pop-icons">
-          <button
-            className={`icon-btn square${speaking && speakTarget?.kind === "word" ? " active" : ""}`}
-            type="button"
+          <IconBtn
+            className={
+              speaking && speakTarget?.kind === "word" ? "square active" : "square"
+            }
+            icon={
+              speaking && speakTarget?.kind === "word" ? (
+                <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+                  <rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor" />
+                </svg>
+              ) : (
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <polygon points="11 5 6 9 3 9 3 15 6 15 11 19 11 5" fill="currentColor" stroke="none" />
+                  <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+                  <path d="M18.5 5.5a9.5 9.5 0 0 1 0 13" />
+                </svg>
+              )
+            }
             title={speaking && speakTarget?.kind === "word" ? "停止朗读" : "朗读"}
-            aria-label={speaking && speakTarget?.kind === "word" ? "停止朗读" : "朗读"}
             onClick={() => onSpeakWord(popover.text)}
-          >
-            {speaking && speakTarget?.kind === "word" ? (
-              <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
-                <rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor" />
+          />
+          <IconBtn
+            className="square"
+            icon={
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                <line x1="6" y1="6" x2="18" y2="18" />
+                <line x1="18" y1="6" x2="6" y2="18" />
               </svg>
-            ) : (
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <polygon points="11 5 6 9 3 9 3 15 6 15 11 19 11 5" fill="currentColor" stroke="none" />
-                <path d="M15.5 8.5a5 5 0 0 1 0 7" />
-                <path d="M18.5 5.5a9.5 9.5 0 0 1 0 13" />
-              </svg>
-            )}
-          </button>
-          <button
-            className="icon-btn square"
-            type="button"
+            }
             title="关闭"
-            aria-label="关闭"
             onClick={onClose}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-              <line x1="6" y1="6" x2="18" y2="18" />
-              <line x1="18" y1="6" x2="6" y2="18" />
-            </svg>
-          </button>
+          />
         </div>
       </div>
       {popover.loading && <div className="muted">翻译中…</div>}
@@ -232,7 +235,7 @@ export default function SelectionPopover({
         <button className="pop-link primary" onClick={onAddVocab}>
           加入生词库
         </button>
-        {onAddPhrase ? (
+        {isPhrase && onAddPhrase ? (
           <button className="pop-link primary" onClick={onAddPhrase}>
             加入短语
           </button>

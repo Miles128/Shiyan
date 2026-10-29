@@ -18,7 +18,8 @@ import {
 } from "../readingPrefs";
 import { AnnotatedPara } from "../annotateText";
 import { bundledGloss, rememberTranslation } from "../wordResolve";
-import WordPopoverShell from "../components/WordPopoverShell";
+import SelectionPopover from "../components/SelectionPopover";
+import IconBtn from "../components/IconBtn";
 import ReaderTypePanel from "../components/ReaderTypePanel";
 import ReaderParagraph from "../components/ReaderParagraph";
 import {
@@ -137,6 +138,12 @@ export default function Reader() {
   const typeBtnRef = useRef<HTMLButtonElement | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const clickGuardRef = useRef(false);
+  // Latest article id for async results: a translation that lands after the
+  // user moved to the next article must not write into that article's state.
+  const idRef = useRef(id);
+  useEffect(() => {
+    idRef.current = id;
+  }, [id]);
 
   const tts = useTts();
   const wordToast = useToast();
@@ -248,6 +255,7 @@ export default function Reader() {
     setShowFullZh(false);
     setVisibleParas({});
     setBusyPara(null);
+    setBusyFull(false);
     setFullProgress(null);
   }, [id]);
 
@@ -312,12 +320,13 @@ export default function Reader() {
     setError(null);
     try {
       const row = await api.translateParagraph(id, index, paragraphs[index]);
+      if (idRef.current !== id) return;
       setTranslations((t) => ({ ...t, [String(index)]: row.translated_text }));
       setVisibleParas((v) => ({ ...v, [index]: true }));
     } catch (e) {
-      setError(String(e));
+      if (idRef.current === id) setError(String(e));
     } finally {
-      setBusyPara(null);
+      if (idRef.current === id) setBusyPara(null);
     }
   }
 
@@ -390,6 +399,7 @@ export default function Reader() {
     setError(null);
     try {
       const result = await api.translateFullArticle(id);
+      if (idRef.current !== id) return;
       setTranslations((prev) => {
         const map: Record<string, string> = { ...prev };
         result.rows.forEach((r) => {
@@ -407,9 +417,9 @@ export default function Reader() {
       });
       setVisibleParas(all);
     } catch (e) {
-      setError(String(e));
+      if (idRef.current === id) setError(String(e));
     } finally {
-      setBusyFull(false);
+      if (idRef.current === id) setBusyFull(false);
     }
   }
 
@@ -457,7 +467,7 @@ export default function Reader() {
 
   return (
     <div
-      className={`page reader${reading.fullWidth ? " reader-full" : ""}`}
+      className="page reader"
       ref={rootRef}
       style={readingCssVars(reading, cfg.show_hard_word_gloss)}
     >
@@ -484,69 +494,51 @@ export default function Reader() {
             )}
           </h1>
           <div className="page-header-actions">
-            <button
-              className="icon-btn"
-              type="button"
-              onClick={() => navigate("/")}
+            <IconBtn
+              icon={<IconBack />}
               title="返回主界面"
-              aria-label="返回主界面"
-            >
-              <IconBack />
-            </button>
-            <button
-              className="icon-btn"
-              type="button"
+              onClick={() => navigate("/")}
+            />
+            <IconBtn
+              icon={liked ? <IconStarFilled /> : <IconStar />}
+              title={
+                liked
+                  ? "取消收藏，之后不再优先推荐同类文章"
+                  : "收藏，之后优先推荐同类文章"
+              }
+              label={liked ? "取消收藏" : "收藏"}
+              pressed={liked}
               onClick={toggleLiked}
-              title={liked ? "取消收藏，之后不再优先推荐同类文章" : "收藏，之后优先推荐同类文章"}
-              aria-label={liked ? "取消收藏" : "收藏"}
-              aria-pressed={liked}
-            >
-              {liked ? <IconStarFilled /> : <IconStar />}
-            </button>
-            <button
-              className="icon-btn"
-              type="button"
+            />
+            <IconBtn
+              icon={articleSpeaking ? <IconStop /> : <IconVolume />}
+              title={articleSpeaking ? "停止朗读" : "朗读全文"}
               onClick={speakArticle}
               disabled={paragraphs.length === 0}
-              title={articleSpeaking ? "停止朗读" : "朗读全文"}
-              aria-label={articleSpeaking ? "停止朗读" : "朗读全文"}
-            >
-              {articleSpeaking ? <IconStop /> : <IconVolume />}
-            </button>
+            />
             {busyFull ? (
-              <button
-                className="icon-btn spin"
-                type="button"
-                disabled
-                aria-busy="true"
+              <IconBtn
+                icon={<IconTranslate />}
+                busy
                 title={translateProgressLabel(fullProgress) ?? "正在翻译…"}
-                aria-label={translateProgressLabel(fullProgress) ?? "正在翻译"}
-              >
-                <IconTranslate />
-              </button>
+                label={translateProgressLabel(fullProgress) ?? "正在翻译"}
+              />
             ) : (
-              <button
-                className="icon-btn"
-                type="button"
-                onClick={() => void toggleFullTranslation()}
+              <IconBtn
+                icon={showFullZh ? <IconEyeOff /> : <IconTranslate />}
                 title={showFullZh ? "隐藏译文" : "全文翻译"}
-                aria-label={showFullZh ? "隐藏译文" : "全文翻译"}
-                aria-pressed={showFullZh}
-              >
-                {showFullZh ? <IconEyeOff /> : <IconTranslate />}
-              </button>
+                pressed={showFullZh}
+                onClick={() => void toggleFullTranslation()}
+              />
             )}
-            <button
-              ref={typeBtnRef}
-              className={`icon-btn type-toggle${typeOpen ? " active" : ""}`}
-              type="button"
-              onClick={() => setTypeOpen((v) => !v)}
+            <IconBtn
+              buttonRef={typeBtnRef}
+              icon="Aa"
+              className={typeOpen ? "type-toggle active" : "type-toggle"}
               title="排版设置"
-              aria-label="排版设置"
-              aria-expanded={typeOpen}
-            >
-              Aa
-            </button>
+              expanded={typeOpen}
+              onClick={() => setTypeOpen((v) => !v)}
+            />
             {typeOpen && (
               <div ref={typePanelRef} className="type-panel-anchor">
                 <ReaderTypePanel />
@@ -611,7 +603,7 @@ export default function Reader() {
         </div>
       )}
 
-      {popoverMount && <WordPopoverShell {...popoverMount} />}
+      {popoverMount && <SelectionPopover {...popoverMount} />}
     </div>
   );
 }

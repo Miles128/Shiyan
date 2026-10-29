@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
-import type { WordPopoverShellProps } from "./components/WordPopoverShell";
-import type { Popover } from "./components/SelectionPopover";
+import type {
+  Popover,
+  SelectionPopoverProps,
+} from "./components/SelectionPopover";
 import type { SpeakTarget } from "./useTts";
 import { useEscapeKey } from "./useEscapeKey";
 import { ensureDetailsLoaded, lookupDetail, prepareLookup } from "./wordResolve";
@@ -103,52 +105,41 @@ export function useWordPopover(config: WordPopoverConfig) {
     }
   }, []);
 
-  const addToVocab = useCallback(async () => {
-    if (!popover) return;
-    const c = cfg.current;
-    try {
-      await api.addMemory({
-        kind: "word",
-        term: popover.text,
-        contextSentence: c.contextFor(popover.source, popover.text),
-        articleId: c.articleId,
-        definitionZh: popover.translation ?? null,
-      });
-      c.onSuccess?.(`已加入生词库：${popover.text}`);
-      setPopover(null);
-      c.onVocabAdded?.();
-    } catch (e) {
-      c.onError(String(e));
-    }
-  }, [popover]);
+  const addMemory = useCallback(
+    async (kind: "word" | "phrase") => {
+      if (!popover) return;
+      const c = cfg.current;
+      const isWord = kind === "word";
+      try {
+        await api.addMemory({
+          kind,
+          term: popover.text,
+          contextSentence: c.contextFor(popover.source, popover.text),
+          articleId: c.articleId,
+          ...(isWord ? { definitionZh: popover.translation ?? null } : {}),
+        });
+        c.onSuccess?.(
+          isWord ? `已加入生词库：${popover.text}` : `已加入短语：${popover.text}`,
+        );
+        setPopover(null);
+        if (isWord) c.onVocabAdded?.();
+      } catch (e) {
+        c.onError(String(e));
+      }
+    },
+    [popover],
+  );
 
-  const addToPhrase = useCallback(async () => {
-    if (!popover) return;
-    const c = cfg.current;
-    try {
-      await api.addMemory({
-        kind: "phrase",
-        term: popover.text,
-        contextSentence: c.contextFor(popover.source, popover.text),
-        articleId: c.articleId,
-      });
-      c.onSuccess?.(`已加入短语：${popover.text}`);
-      setPopover(null);
-    } catch (e) {
-      c.onError(String(e));
-    }
-  }, [popover]);
-
-  // One prop bundle ready to spread into the shell, so a new host cannot
+  // One prop bundle ready to spread into the popover, so a new host cannot
   // forget one of the callbacks.
-  const mount: WordPopoverShellProps | null = popover
+  const mount: SelectionPopoverProps | null = popover
     ? {
         popover,
         speaking: config.tts.speaking,
         speakTarget: config.tts.speakTarget,
         onSpeakWord: speakWord,
-        onAddVocab: () => void addToVocab(),
-        onAddPhrase: () => void addToPhrase(),
+        onAddVocab: () => void addMemory("word"),
+        onAddPhrase: () => void addMemory("phrase"),
         onClose: closePopover,
       }
     : null;
@@ -159,8 +150,7 @@ export function useWordPopover(config: WordPopoverConfig) {
     closePopover,
     showMeaning,
     speakWord,
-    addToVocab,
-    addToPhrase,
+    addMemory,
     mount,
   };
 }

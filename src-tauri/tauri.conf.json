@@ -34,6 +34,9 @@
       "app",
       "dmg"
     ],
+    "resources": {
+      "resources/shiyan-translate": "shiyan-translate"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

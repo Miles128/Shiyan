@@ -2,6 +2,8 @@ import { useCallback, useState } from "react";
 import { api, type MemoryKind } from "../api";
 import { invalidateQueries, useQuery } from "../query";
 import { useTts } from "../useTts";
+import IconBtn from "./IconBtn";
+import Tabs from "./Tabs";
 
 type Tab = "learning" | "mastered";
 
@@ -52,20 +54,9 @@ export default function MemoryLibrary({
     );
   });
 
-  async function setStatus(id: string, status: string) {
+  async function mutate(action: () => Promise<unknown>) {
     try {
-      await api.setMemoryStatus(id, status);
-      setActionError(null);
-      invalidateQueries(["memory", kind]);
-      onChanged?.();
-    } catch (e) {
-      setActionError(String(e));
-    }
-  }
-
-  async function remove(id: string) {
-    try {
-      await api.deleteMemory(id);
+      await action();
       setActionError(null);
       invalidateQueries(["memory", kind]);
       onChanged?.();
@@ -77,22 +68,14 @@ export default function MemoryLibrary({
   return (
     <>
       <div className="vocab-toolbar">
-        <div className="tabs">
-          {(
-            [
-              ["learning", "学习中"],
-              ["mastered", "已掌握"],
-            ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              className={tab === id ? "tab active" : "tab"}
-              onClick={() => setTab(id)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <Tabs
+          items={[
+            ["learning", "学习中"],
+            ["mastered", "已掌握"],
+          ] as const}
+          value={tab}
+          onChange={setTab}
+        />
         <input
           className="search vocab-toolbar-search"
           placeholder={searchPlaceholder}
@@ -118,45 +101,44 @@ export default function MemoryLibrary({
               {v.definition_zh || <span className="muted">暂无释义</span>}
             </span>
             <span className="vocab-row-actions">
-              {tab === "learning" ? (
-                <button
-                  type="button"
-                  className="icon-btn square"
-                  title="标为已掌握"
-                  aria-label={`标为已掌握：${v.term}`}
-                  onClick={() => void setStatus(v.id, "mastered")}
-                >
+              <IconBtn
+                className="square"
+                icon={
+                  tab === "learning" ? (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M20 6 9 17l-5-5" />
+                    </svg>
+                  ) : (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M3 12a9 9 0 1 0 2.64-6.36" />
+                      <path d="M3 4v5h5" />
+                    </svg>
+                  )
+                }
+                title={tab === "learning" ? "标为已掌握" : "恢复学习"}
+                label={`${tab === "learning" ? "标为已掌握" : "恢复学习"}：${v.term}`}
+                onClick={() =>
+                  void mutate(() =>
+                    api.setMemoryStatus(
+                      v.id,
+                      tab === "learning" ? "mastered" : "learning",
+                    ),
+                  )
+                }
+              />
+              <IconBtn
+                className="square danger"
+                icon={
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                    <path d="M20 6 9 17l-5-5" />
+                    <path d="M3 6h18" />
+                    <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
                   </svg>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="icon-btn square"
-                  title="恢复学习"
-                  aria-label={`恢复学习：${v.term}`}
-                  onClick={() => void setStatus(v.id, "learning")}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                    <path d="M3 12a9 9 0 1 0 2.64-6.36" />
-                    <path d="M3 4v5h5" />
-                  </svg>
-                </button>
-              )}
-              <button
-                type="button"
-                className="icon-btn square danger"
+                }
                 title="删除"
-                aria-label={`删除：${v.term}`}
-                onClick={() => void remove(v.id)}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                  <path d="M3 6h18" />
-                  <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
-                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-                </svg>
-              </button>
+                label={`删除：${v.term}`}
+                onClick={() => void mutate(() => api.deleteMemory(v.id))}
+              />
             </span>
           </li>
         ))}

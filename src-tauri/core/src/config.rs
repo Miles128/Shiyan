@@ -6,93 +6,48 @@ use ts_rs::TS;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
+#[serde(default)]
 pub struct AppConfig {
-    #[serde(default)]
     pub base_url: String,
-    #[serde(default)]
     pub api_key: String,
-    #[serde(default)]
     pub model: String,
     /// User CEFR level (A1–C2). Words above this are underlined when reading.
-    #[serde(default = "default_cefr_level")]
     pub cefr_level: String,
     /// Known vocabulary band (1000 / 3000 / 5000 / 10000 / 20000).
     /// Words with frequency rank above this are underlined.
-    #[serde(default = "default_freq_band")]
     pub freq_band: u32,
     /// Whether the adaptive vocab placement test has been completed.
-    #[serde(default)]
     pub vocab_placement_done: bool,
     /// Final continuous ability L from the last placement test.
-    #[serde(default)]
     pub vocab_placement_l: Option<f64>,
     /// ISO timestamp of the last placement test.
-    #[serde(default)]
     pub vocab_placement_at: Option<String>,
     /// User dismissed the placement prompt; don't force it again.
-    #[serde(default)]
     pub vocab_placement_skipped: bool,
     /// Reader body font preset (serif / palatino / georgia / newyork / songti / sans).
-    #[serde(default = "default_reader_font")]
     pub reader_font: String,
     /// Reader body font size in px (16 / 18 / 20 / 22 / 24).
-    #[serde(default = "default_reader_font_size")]
     pub reader_font_size: u32,
     /// Reader body line-height (1.5 / 1.65 / 1.75 / 1.9 / 2.1).
-    #[serde(default = "default_reader_line_height")]
     pub reader_line_height: f64,
     /// Reader measure preset (narrow / medium / wide / full).
-    #[serde(default = "default_reader_line_width")]
     pub reader_line_width: String,
     /// UI theme preference: system | light | dark.
-    #[serde(default = "default_theme")]
     pub theme: String,
     /// Auto-ingested articles older than this many days are purged on refresh.
     /// 0 = keep forever. Liked articles and user imports are always kept.
-    #[serde(default = "default_article_retention_days")]
     pub article_retention_days: u32,
     /// Show a small Chinese gloss beneath "super-hard" words while reading
     /// (CEFR ≥2 levels above the user's level; proper nouns use their
     /// name gloss). Off = the reader stays as clean as before; underline
     /// still works. Evaluated in the frontend (`isSuperHardWord`).
-    #[serde(default = "default_show_hard_word_gloss")]
     pub show_hard_word_gloss: bool,
-}
-
-fn default_cefr_level() -> String {
-    "B1".into()
-}
-
-fn default_freq_band() -> u32 {
-    3000
-}
-
-fn default_reader_font() -> String {
-    "serif".into()
-}
-
-fn default_reader_font_size() -> u32 {
-    18
-}
-
-fn default_reader_line_height() -> f64 {
-    1.75
-}
-
-fn default_reader_line_width() -> String {
-    "full".into()
-}
-
-fn default_article_retention_days() -> u32 {
-    14
-}
-
-fn default_show_hard_word_gloss() -> bool {
-    true
-}
-
-fn default_theme() -> String {
-    "system".into()
+    /// Which engine translates the reader text: `auto` (macOS system engine
+    /// when usable, API otherwise), `apple` (system engine only — article
+    /// text never leaves the Mac), `api` (LLM only). Article blurbs and vocab
+    /// enrichment always use the API: they are generative tasks, not
+    /// translation.
+    pub translation_provider: String,
 }
 
 impl Default for AppConfig {
@@ -101,19 +56,20 @@ impl Default for AppConfig {
             base_url: "https://api.openai.com/v1".into(),
             api_key: String::new(),
             model: "gpt-4o-mini".into(),
-            cefr_level: default_cefr_level(),
-            freq_band: default_freq_band(),
+            cefr_level: "B1".into(),
+            freq_band: 3000,
             vocab_placement_done: false,
             vocab_placement_l: None,
             vocab_placement_at: None,
             vocab_placement_skipped: false,
-            reader_font: default_reader_font(),
-            reader_font_size: default_reader_font_size(),
-            reader_line_height: default_reader_line_height(),
-            reader_line_width: default_reader_line_width(),
-            article_retention_days: default_article_retention_days(),
-            theme: default_theme(),
-            show_hard_word_gloss: default_show_hard_word_gloss(),
+            reader_font: "serif".into(),
+            reader_font_size: 18,
+            reader_line_height: 1.75,
+            reader_line_width: "full".into(),
+            article_retention_days: 14,
+            theme: "system".into(),
+            show_hard_word_gloss: true,
+            translation_provider: "auto".into(),
         }
     }
 }

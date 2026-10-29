@@ -29,6 +29,9 @@ config.local.json
 # Rust
 src-tauri/target
 
+# Swift helper for the on-device translation engine (built by src-tauri/build.rs)
+src-tauri/resources/
+
 # dictionary build cache (large downloads)
 scripts/.cache/
 

@@ -6,6 +6,7 @@ import { useConfigForm } from "../useConfigForm";
 import { placementSummaryText } from "../placement/engine";
 import { useToast } from "../components/Toaster";
 import PageBack from "../components/PageBack";
+import Tabs from "../components/Tabs";
 import { type PrefOption } from "../prefOptions";
 import {
   CEFR_LEVELS,
@@ -35,6 +36,13 @@ const FREQ_OPTIONS: readonly PrefOption[] = FREQ_BANDS.map((n) => ({
   label: String(n >= 1000 ? `${n / 1000}k` : n),
 }));
 
+/** 正文翻译引擎：系统翻译（离线免费）还是大模型 API。 */
+const TRANSLATION_ENGINES: readonly PrefOption[] = [
+  { value: "auto", label: "自动（优先系统翻译）" },
+  { value: "apple", label: "仅系统翻译（离线）" },
+  { value: "api", label: "仅大模型 API" },
+];
+
 /** Labelled <select> bound to one config field; options are data-driven. */
 function PrefSelect(props: {
   label: string;
@@ -63,6 +71,8 @@ export default function Settings() {
   );
   const [tab, setTab] = useState<Tab>("reading");
   const [backingUp, setBackingUp] = useState(false);
+  // 系统翻译引擎可用性：与语言包是否安装有关，启动时查一次。
+  const [engineStatus, setEngineStatus] = useState<string | null>(null);
   // 5B: 刷新进行中禁用备份（后端同样拒绝，双保险）。
   const [refreshing, setRefreshing] = useState(false);
   useEffect(() => {
@@ -93,21 +103,31 @@ export default function Settings() {
     }
   }
 
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .translationEngineStatus()
+      .then((status) => {
+        if (!cancelled) setEngineStatus(status.message);
+      })
+      .catch(() => {
+        if (!cancelled) setEngineStatus("无法检测系统翻译状态");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <div className="page">
-      <div className="tabs header-tabs">
-        {TABS.map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            className={tab === id ? "tab active" : "tab"}
-            onClick={() => setTab(id)}
-          >
-            {label}
-          </button>
-        ))}
+      <Tabs
+        items={TABS}
+        value={tab}
+        onChange={setTab}
+        className="tabs header-tabs"
+      >
         <PageBack />
-      </div>
+      </Tabs>
 
       {tab === "reading" && (
         <>
@@ -182,38 +202,58 @@ export default function Settings() {
       {tab === "books" && <BooksSection />}
 
       {tab === "llm" && (
-        <section className="settings-section">
-          <h2>大模型（OpenAI 兼容）</h2>
-          <label>
-            Base URL
-            <input
-              value={cfg.base_url}
-              onChange={(e) => updateSoon({ base_url: e.target.value })}
-              placeholder="https://api.openai.com/v1"
+        <>
+          <section className="settings-section">
+            <h2>翻译引擎</h2>
+            <PrefSelect
+              label="正文翻译"
+              value={cfg.translation_provider}
+              onChange={(raw) => updateNow({ translation_provider: raw })}
+              options={TRANSLATION_ENGINES}
             />
-          </label>
-          <label>
-            API Key
-            <input
-              type="password"
-              value={cfg.api_key}
-              onChange={(e) => updateSoon({ api_key: e.target.value })}
-              placeholder="sk-..."
-            />
-          </label>
-          <label>
-            Model
-            <input
-              value={cfg.model}
-              onChange={(e) => updateSoon({ model: e.target.value })}
-              placeholder="gpt-4o-mini"
-            />
-          </label>
-          <p className="muted">
-            可复制 <code>config.local.json.example</code> 为{" "}
-            <code>config.local.json</code> 后编辑；该文件已 gitignore。
-          </p>
-        </section>
+            <p className="muted">
+              系统翻译 = macOS 内置引擎，离线免费，文章正文不出本机（需
+              macOS 26+，并在 系统设置 → 通用 → 语言与地区 → 翻译语言 中安装简体中文与英语）。
+              标题简介与生词释义是生成任务，始终走下方的大模型。
+            </p>
+            <p className="muted">
+              {engineStatus ?? "正在检测系统翻译状态…"}
+            </p>
+          </section>
+
+          <section className="settings-section">
+            <h2>大模型（OpenAI 兼容）</h2>
+            <label>
+              Base URL
+              <input
+                value={cfg.base_url}
+                onChange={(e) => updateSoon({ base_url: e.target.value })}
+                placeholder="https://api.openai.com/v1"
+              />
+            </label>
+            <label>
+              API Key
+              <input
+                type="password"
+                value={cfg.api_key}
+                onChange={(e) => updateSoon({ api_key: e.target.value })}
+                placeholder="sk-..."
+              />
+            </label>
+            <label>
+              Model
+              <input
+                value={cfg.model}
+                onChange={(e) => updateSoon({ model: e.target.value })}
+                placeholder="gpt-4o-mini"
+              />
+            </label>
+            <p className="muted">
+              可复制 <code>config.local.json.example</code> 为{" "}
+              <code>config.local.json</code> 后编辑；该文件已 gitignore。
+            </p>
+          </section>
+        </>
       )}
       {tab === "data" && (
         <section className="settings-section">

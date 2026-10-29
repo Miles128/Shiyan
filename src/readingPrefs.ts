@@ -80,7 +80,6 @@ export type ResolvedReading = {
   lineHeight: ReaderLineHeight;
   lineWidthId: ReaderLineWidthId;
   measure: string;
-  fullWidth: boolean;
 };
 
 /**
@@ -159,7 +158,6 @@ export function resolveReadingPrefs(
     lineHeight: prefs.reader_line_height,
     lineWidthId: width.id,
     measure: width.measure,
-    fullWidth: width.id === "full",
   };
 }
 

@@ -37,23 +37,12 @@ pub fn insert_catalog_row(conn: &Connection, b: &CatalogBook) -> Result<(), AppE
 }
 
 pub fn set_catalog_stamp(conn: &Connection, stamp: &str) -> Result<(), AppError> {
-    conn.execute(
-        "INSERT INTO app_meta (key, value) VALUES (?1, ?2)
-         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        params![CATALOG_STAMP_KEY, stamp],
-    )?;
-    Ok(())
+    super::set_meta(conn, CATALOG_STAMP_KEY, stamp)
 }
 
 /// Timestamp of the last catalog refresh, `None` when never downloaded.
 pub fn catalog_stamp(conn: &Connection) -> Result<Option<String>, AppError> {
-    conn.query_row(
-        "SELECT value FROM app_meta WHERE key=?1",
-        params![CATALOG_STAMP_KEY],
-        |row| row.get(0),
-    )
-    .optional()
-    .map_err(AppError::from)
+    super::get_meta(conn, CATALOG_STAMP_KEY)
 }
 
 /// Title/author search. `shelf` filters on the coarse genre ('' = all).

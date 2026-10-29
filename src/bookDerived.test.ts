@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bookMeta, formatAuthor, importSummary } from "./bookDerived";
+import { bookMeta, formatAuthor } from "./bookDerived";
 
 describe("formatAuthor", () => {
   it("flips last, first and drops life dates", () => {
@@ -28,11 +28,5 @@ describe("bookMeta", () => {
     expect(bookMeta("Austen, Jane", "")).toBe("Jane Austen");
     expect(bookMeta("", "1813")).toBe("1813");
     expect(bookMeta("", "")).toBe("");
-  });
-});
-
-describe("importSummary", () => {
-  it("names the book and chapter count", () => {
-    expect(importSummary("Middlemarch", 86)).toBe("已导入《Middlemarch》·86 章");
   });
 });

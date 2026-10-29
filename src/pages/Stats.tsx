@@ -14,6 +14,15 @@ function fmtWords(words: number): string {
   return `${(words / 1000).toFixed(1)}k`;
 }
 
+function StatCard({ value, label }: { value: string | number; label: string }) {
+  return (
+    <div className="stat-card">
+      <span className="stat-value">{value}</span>
+      <span className="stat-label">{label}</span>
+    </div>
+  );
+}
+
 /** Reading statistics: daily activity, totals and library state. */
 export default function Stats() {
   // Mount paints the cached stats instantly when present (shared with the
@@ -61,34 +70,18 @@ export default function Stats() {
       )}
 
       <section className="stat-grid">
-        <div className="stat-card">
-          <span className="stat-value">{fmtMinutes(stats.minutes_total)}</span>
-          <span className="stat-label">
-            累计阅读时长 · 本周 {fmtMinutes(stats.minutes_7d)}
-          </span>
-        </div>
-        <div className="stat-card">
-          <span className="stat-value">{stats.articles_total}</span>
-          <span className="stat-label">
-            读过的文章 · 本周 {stats.articles_7d} 篇
-          </span>
-        </div>
-        <div className="stat-card">
-          <span className="stat-value">{stats.streak_days} 天</span>
-          <span className="stat-label">连续阅读</span>
-        </div>
-        <div className="stat-card">
-          <span className="stat-value">{fmtWords(stats.words_total)}</span>
-          <span className="stat-label">累计读过词数</span>
-        </div>
-        <div className="stat-card">
-          <span className="stat-value">{stats.completed_total}</span>
-          <span className="stat-label">读完（滚到文末）</span>
-        </div>
-        <div className="stat-card">
-          <span className="stat-value">{stats.liked_total}</span>
-          <span className="stat-label">收藏</span>
-        </div>
+        <StatCard
+          value={fmtMinutes(stats.minutes_total)}
+          label={`累计阅读时长 · 本周 ${fmtMinutes(stats.minutes_7d)}`}
+        />
+        <StatCard
+          value={stats.articles_total}
+          label={`读过的文章 · 本周 ${stats.articles_7d} 篇`}
+        />
+        <StatCard value={`${stats.streak_days} 天`} label="连续阅读" />
+        <StatCard value={fmtWords(stats.words_total)} label="累计读过词数" />
+        <StatCard value={stats.completed_total} label="读完（滚到文末）" />
+        <StatCard value={stats.liked_total} label="收藏" />
       </section>
 
       <section className="settings-section">
@@ -139,22 +132,10 @@ export default function Stats() {
       <section className="settings-section">
         <h2>学习库</h2>
         <div className="stat-grid">
-          <div className="stat-card">
-            <span className="stat-value">{stats.vocab_learning}</span>
-            <span className="stat-label">生词学习中</span>
-          </div>
-          <div className="stat-card">
-            <span className="stat-value">{stats.vocab_mastered}</span>
-            <span className="stat-label">生词已掌握</span>
-          </div>
-          <div className="stat-card">
-            <span className="stat-value">{stats.phrases_learning}</span>
-            <span className="stat-label">短语学习中</span>
-          </div>
-          <div className="stat-card">
-            <span className="stat-value">{stats.phrases_mastered}</span>
-            <span className="stat-label">短语已掌握</span>
-          </div>
+          <StatCard value={stats.vocab_learning} label="生词学习中" />
+          <StatCard value={stats.vocab_mastered} label="生词已掌握" />
+          <StatCard value={stats.phrases_learning} label="短语学习中" />
+          <StatCard value={stats.phrases_mastered} label="短语已掌握" />
         </div>
       </section>
     </div>

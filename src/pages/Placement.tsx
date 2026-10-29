@@ -3,6 +3,8 @@ import { Link, useNavigate } from "react-router-dom";
 import { type AppConfig } from "../api";
 import { useAppConfig } from "../store";
 import PageBack from "../components/PageBack";
+import IconBtn from "../components/IconBtn";
+import { IconBack } from "../components/icons";
 import {
   L0,
   PLACEMENT_TOTAL,
@@ -223,36 +225,17 @@ export default function Placement() {
             {progress} / {PLACEMENT_TOTAL}
           </p>
         </div>
-        <button
-          type="button"
-          className="icon-btn"
+        <IconBtn
+          icon={<IconBack size={15} />}
+          title="返回主界面（将丢失测验进度）"
           onClick={() => {
             if (
-              window.confirm(
-                `已答 ${n} 题，离开将丢失进度需重测。确定离开？`,
-              )
+              window.confirm(`已答 ${n} 题，离开将丢失进度需重测。确定离开？`)
             ) {
               navigate("/");
             }
           }}
-          title="返回主界面（将丢失测验进度）"
-          aria-label="返回主界面"
-        >
-          <svg
-            width="15"
-            height="15"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden
-          >
-            <path d="M19 12H5" />
-            <path d="m12 19-7-7 7-7" />
-          </svg>
-        </button>
+        />
       </header>
       {error && <p className="banner err">{error}</p>}
       {question && (

@@ -57,4 +57,6 @@ pub fn split_paragraphs(text: &str) -> Vec<String> {
 }
 
 #[cfg(test)]
+mod probe;
+#[cfg(test)]
 mod tests;

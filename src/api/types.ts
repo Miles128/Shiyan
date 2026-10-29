@@ -17,6 +17,7 @@ export type { RefreshProgress } from "../../src-tauri/core/bindings/RefreshProgr
 export type { RefreshResult } from "../../src-tauri/core/bindings/RefreshResult";
 export type { TranslateProgress } from "../../src-tauri/core/bindings/TranslateProgress";
 export type { TranslationRow } from "../../src-tauri/core/bindings/TranslationRow";
+export type { TranslationEngineStatus } from "../../src-tauri/core/bindings/TranslationEngineStatus";
 export type { MemoryItem } from "../../src-tauri/core/bindings/MemoryItem";
 export type { LearningStats } from "../../src-tauri/core/bindings/LearningStats";
 export type { ReadingStats } from "../../src-tauri/core/bindings/ReadingStats";
@@ -46,6 +47,7 @@ export function defaultAppConfig(): RustAppConfig {
     article_retention_days: 14,
     theme: "system",
     show_hard_word_gloss: true,
+    translation_provider: "auto",
     ...defaultReadingPrefs(),
   };
 }

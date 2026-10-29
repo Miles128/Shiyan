@@ -87,6 +87,38 @@ fn list_articles(
     )
 }
 
+/// Columns and tables removed by earlier migrations must stay gone, on a fresh
+/// database and after migrating an old one.
+fn assert_dead_schema_gone(conn: &rusqlite::Connection) {
+    for (table, column) in [
+        ("articles", "tags_json"),
+        ("articles", "quality"),
+        ("articles", "extraction_source"),
+        ("book_catalog", "subjects"),
+        ("feed_sources", "fail_count"),
+        ("feed_sources", "last_fetched_at"),
+    ] {
+        let n: i64 = conn
+            .query_row(
+                &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name=?1"),
+                [column],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 0, "{table}.{column} must be gone after migrate");
+    }
+    for table in ["known_words", "lookup_history", "removed_feeds"] {
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                [table],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(n, 0, "{table} must be gone after migrate");
+    }
+}
+
 #[test]
 fn db_seeds_feeds_and_stores_article() {
     let tmp = TmpDb::new("test");
@@ -115,19 +147,10 @@ fn db_seeds_feeds_and_stores_article() {
     );
 
     let article = db::Article {
-        id: Uuid::new_v4().to_string(),
         url: "https://example.com/a".into(),
         title: "Hello".into(),
-        source: "Test".into(),
-        category: "tech".into(),
-        published_at: None,
-        content_text: "word ".repeat(100),
         fetched_at: chrono::Utc::now().to_rfc3339(),
-        origin: "rss".into(),
-        summary_zh: String::new(),
-        last_opened_at: None,
-        open_count: 0,
-        ..Default::default()
+        ..sample_article(&Uuid::new_v4().to_string())
     };
     db::insert_article_if_new(&conn, &article).unwrap();
     let list = list_articles(&conn, Some("tech"), None, None).unwrap();
@@ -135,27 +158,22 @@ fn db_seeds_feeds_and_stores_article() {
 }
 
 #[test]
-fn seed_feeds_adds_new_curated_sources() {
+fn seed_reconciles_curated_sources_and_keeps_user_feeds() {
+    // A curated source missing from an older DB is re-inserted on open.
     let tmp = TmpDb::new("test-seed");
     let conn = tmp.conn();
     let before = db::list_feeds(&conn).unwrap().len();
-    // Simulate older DB missing a curated feed; re-open triggers seed INSERT OR IGNORE.
     conn.execute("DELETE FROM feed_sources WHERE id='propublica'", [])
         .unwrap();
-    let mid = db::list_feeds(&conn).unwrap().len();
-    assert_eq!(mid, before - 1);
+    assert_eq!(db::list_feeds(&conn).unwrap().len(), before - 1);
     drop(conn);
     let conn = tmp.conn();
-    let after = db::list_feeds(&conn).unwrap().len();
-    assert_eq!(after, before);
-    assert!(db::list_feeds(&conn)
-        .unwrap()
-        .iter()
-        .any(|f| f.id == "propublica"));
-}
+    let feeds = db::list_feeds(&conn).unwrap();
+    assert_eq!(feeds.len(), before);
+    assert!(feeds.iter().any(|f| f.id == "propublica"));
+    drop(conn);
 
-#[test]
-fn seed_feeds_removes_obsolete_sources() {
+    // An obsolete curated source is removed on open.
     let tmp = TmpDb::new("test-obsolete");
     let conn = tmp.conn();
     conn.execute(
@@ -176,10 +194,9 @@ fn seed_feeds_removes_obsolete_sources() {
             .any(|f| f.id == "rust-blog"),
         "obsolete curated feeds should be deleted on open"
     );
-}
+    drop(conn);
 
-#[test]
-fn seed_feeds_preserves_user_subscriptions() {
+    // User subscriptions and custom categories survive seeding.
     let tmp = TmpDb::new("test-user-feed");
     let conn = tmp.conn();
     let feed = db::subscribe_feed(
@@ -211,24 +228,14 @@ fn insert_article_if_new_is_idempotent() {
     let conn = tmp.conn();
 
     let first = db::Article {
-        id: "id-1".into(),
         url: "https://example.com/same".into(),
         title: "Original Title".into(),
-        source: "Test".into(),
-        category: "tech".into(),
-        published_at: None,
         content_text: "original content that should stay".into(),
-        fetched_at: "2020-01-01T00:00:00Z".into(),
-        origin: "rss".into(),
-        summary_zh: String::new(),
-        last_opened_at: None,
-        open_count: 0,
-        ..Default::default()
+        ..sample_article("id-1")
     };
     assert!(db::insert_article_if_new(&conn, &first).unwrap());
 
     let second = db::Article {
-        id: "id-2".into(),
         url: "https://example.com/same".into(),
         title: "Changed Title".into(),
         source: "Other".into(),
@@ -236,11 +243,7 @@ fn insert_article_if_new_is_idempotent() {
         published_at: Some("2024-01-01T00:00:00Z".into()),
         content_text: "should not overwrite".into(),
         fetched_at: "2024-06-01T00:00:00Z".into(),
-        origin: "rss".into(),
-        summary_zh: String::new(),
-        last_opened_at: None,
-        open_count: 0,
-        ..Default::default()
+        ..sample_article("id-2")
     };
     assert!(!db::insert_article_if_new(&conn, &second).unwrap());
 
@@ -279,19 +282,11 @@ fn list_article_urls_supports_incremental_skip() {
     let tmp = TmpDb::new("urls");
     let conn = tmp.conn();
     let a = db::Article {
-        id: "a1".into(),
         url: "https://example.com/one".into(),
         title: "One".into(),
         source: "T".into(),
-        category: "tech".into(),
-        published_at: None,
         content_text: "x".repeat(50),
-        fetched_at: "2020-01-01T00:00:00Z".into(),
-        origin: "rss".into(),
-        summary_zh: String::new(),
-        last_opened_at: None,
-        open_count: 0,
-        ..Default::default()
+        ..sample_article("a1")
     };
     db::insert_article_if_new(&conn, &a).unwrap();
     let urls = db::list_article_urls(&conn).unwrap();
@@ -343,19 +338,11 @@ fn refresh_article_content_updates_longer_body() {
     let tmp = TmpDb::new("refresh");
     let conn = tmp.conn();
     let a = db::Article {
-        id: "r1".into(),
         url: "https://example.com/refresh".into(),
         title: "Old".into(),
         source: "T".into(),
-        category: "tech".into(),
-        published_at: None,
         content_text: "short body".into(),
-        fetched_at: "2020-01-01T00:00:00Z".into(),
-        origin: "rss".into(),
-        summary_zh: String::new(),
-        last_opened_at: None,
-        open_count: 0,
-        ..Default::default()
+        ..sample_article("r1")
     };
     db::insert_article_if_new(&conn, &a).unwrap();
     db::set_article_summary_zh(&conn, "r1", "旧简介").unwrap();
@@ -368,15 +355,9 @@ fn refresh_article_content_updates_longer_body() {
         url: "https://example.com/refresh".into(),
         title: "New Title".into(),
         source: "T".into(),
-        category: "tech".into(),
-        published_at: None,
         content_text: longer.clone(),
         fetched_at: "2024-01-01T00:00:00Z".into(),
-        origin: "rss".into(),
-        summary_zh: String::new(),
-        last_opened_at: None,
-        open_count: 0,
-        ..Default::default()
+        ..sample_article("")
     };
     let changed = db::refresh_article_content(&conn, &update).unwrap();
     assert!(changed);
@@ -397,19 +378,11 @@ fn body_replacement_invalidates_paragraph_translations() {
     let tmp = TmpDb::new("invalidate");
     let conn = tmp.conn();
     let a = db::Article {
-        id: "inv1".into(),
         url: "https://example.com/invalidate".into(),
         title: "Old".into(),
         source: "T".into(),
-        category: "tech".into(),
-        published_at: None,
         content_text: "old body ".repeat(60),
-        fetched_at: "2020-01-01T00:00:00Z".into(),
-        origin: "rss".into(),
-        summary_zh: String::new(),
-        last_opened_at: None,
-        open_count: 0,
-        ..Default::default()
+        ..sample_article("inv1")
     };
     db::insert_article_if_new(&conn, &a).unwrap();
     db::save_translation(&conn, "inv1", "paragraph", "0", "old", "旧", "test").unwrap();
@@ -441,19 +414,13 @@ fn refresh_article_content_skips_book_chapters() {
     let conn = tmp.conn();
     let original = "imported body ".repeat(40);
     let a = db::Article {
-        id: "imp1".into(),
         url: "https://example.com/same-url".into(),
         title: "Imported".into(),
         source: "导入".into(),
         category: "other".into(),
-        published_at: None,
         content_text: original.clone(),
-        fetched_at: "2020-01-01T00:00:00Z".into(),
         origin: "book".into(),
-        summary_zh: String::new(),
-        last_opened_at: None,
-        open_count: 0,
-        ..Default::default()
+        ..sample_article("imp1")
     };
     db::insert_article_if_new(&conn, &a).unwrap();
 
@@ -462,15 +429,9 @@ fn refresh_article_content_skips_book_chapters() {
         url: "https://example.com/same-url".into(),
         title: "RSS overwrite".into(),
         source: "T".into(),
-        category: "tech".into(),
-        published_at: None,
         content_text: "word ".repeat(500),
         fetched_at: "2024-01-01T00:00:00Z".into(),
-        origin: "rss".into(),
-        summary_zh: String::new(),
-        last_opened_at: None,
-        open_count: 0,
-        ..Default::default()
+        ..sample_article("")
     };
     let changed = db::refresh_article_content(&conn, &update).unwrap();
     assert!(!changed);
@@ -487,19 +448,11 @@ fn list_articles_returns_excerpt_not_full_body() {
     let conn = tmp.conn();
     let body = "x".repeat(9000);
     let a = db::Article {
-        id: "long1".into(),
         url: "https://example.com/long".into(),
         title: "Long".into(),
         source: "S".into(),
-        category: "tech".into(),
-        published_at: None,
         content_text: body.clone(),
-        fetched_at: "2020-01-01T00:00:00Z".into(),
-        origin: "rss".into(),
-        summary_zh: String::new(),
-        last_opened_at: None,
-        open_count: 0,
-        ..Default::default()
+        ..sample_article("long1")
     };
     db::insert_article_if_new(&conn, &a).unwrap();
 
@@ -521,19 +474,12 @@ fn list_articles_paginates() {
     let conn = tmp.conn();
     for i in 0..5 {
         let a = db::Article {
-            id: format!("p{i}"),
             url: format!("https://example.com/{i}"),
             title: format!("T{i}"),
-                source: "S".into(),
-            category: "tech".into(),
-            published_at: None,
+            source: "S".into(),
             content_text: "x".repeat(50),
             fetched_at: format!("2020-01-0{}T00:00:00Z", i + 1),
-            origin: "rss".into(),
-        summary_zh: String::new(),
-        last_opened_at: None,
-        open_count: 0,
-        ..Default::default()
+            ..sample_article(&format!("p{i}"))
         };
         db::insert_article_if_new(&conn, &a).unwrap();
     }
@@ -1002,33 +948,7 @@ fn legacy_dead_columns_and_tables_are_dropped() {
 
     db::migrate(&conn).unwrap();
 
-    for (table, column) in [
-        ("articles", "tags_json"),
-        ("articles", "quality"),
-        ("articles", "extraction_source"),
-        ("feed_sources", "fail_count"),
-        ("feed_sources", "last_fetched_at"),
-        ("book_catalog", "subjects"),
-    ] {
-        let n: i64 = conn
-            .query_row(
-                &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name=?1"),
-                [column],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(n, 0, "{table}.{column} must be dropped");
-    }
-    for table in ["known_words", "lookup_history", "removed_feeds"] {
-        let n: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
-                [table],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(n, 0, "{table} must be dropped");
-    }
+    assert_dead_schema_gone(&conn);
 }
 
 #[test]
@@ -1497,33 +1417,7 @@ fn schema_adds_summary_zh_column() {
         )
         .unwrap();
     assert_eq!(meta_table, 1, "app_meta should exist after migrate");
-    for (table, column) in [
-        ("articles", "tags_json"),
-        ("book_catalog", "subjects"),
-        ("feed_sources", "fail_count"),
-        ("feed_sources", "last_fetched_at"),
-    ] {
-        let n: i64 = conn
-            .query_row(
-                &format!(
-                    "SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name=?1"
-                ),
-                [column],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(n, 0, "{table}.{column} must be gone after migrate");
-    }
-    for table in ["known_words", "lookup_history", "removed_feeds"] {
-        let n: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
-                [table],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(n, 0, "{table} must be gone after migrate");
-    }
+    assert_dead_schema_gone(&conn);
     let quality_col: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM pragma_table_info('articles') WHERE name='quality'",

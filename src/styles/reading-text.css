@@ -62,6 +62,9 @@
 .article-body {
   margin-top: 8px;
   width: 100%;
+  /* 行宽档位（Aa 面板）在这里生效；默认「全宽」= 100% 不改版式。 */
+  max-width: var(--reader-measure, 100%);
+  margin-inline: auto;
 }
 
 .para-block {

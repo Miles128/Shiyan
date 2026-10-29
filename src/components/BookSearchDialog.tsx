@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type CatalogBook, type ImportedBook } from "../api";
 import { BOOK_SHELVES, bookMeta } from "../bookDerived";
 import { useEscapeKey } from "../useEscapeKey";
+import IconBtn from "./IconBtn";
 
 type Props = {
   onClose: () => void;
@@ -102,15 +103,7 @@ export default function BookSearchDialog({ onClose, onImported }: Props) {
       >
         <div className="book-dialog-head">
           <h2>搜索 Project Gutenberg</h2>
-          <button
-            type="button"
-            className="icon-btn"
-            onClick={onClose}
-            aria-label="关闭"
-            title="关闭"
-          >
-            ✕
-          </button>
+          <IconBtn icon="✕" title="关闭" onClick={onClose} />
         </div>
 
         <p className="muted book-dialog-hint">

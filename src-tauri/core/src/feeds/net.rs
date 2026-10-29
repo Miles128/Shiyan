@@ -162,30 +162,26 @@ pub fn ensure_public_http_url(url: &str) -> Result<url::Url, AppError> {
     Ok(parsed)
 }
 
+/// Failed validation with a user-facing reason.
+fn invalid(error: impl std::fmt::Display) -> FeedValidation {
+    FeedValidation {
+        ok: false,
+        title: None,
+        entry_count: 0,
+        error: Some(error.to_string()),
+    }
+}
+
 /// Probe a URL: fetch + parse as RSS/Atom. Does not write to DB.
 pub fn validate_feed_url(url: &str) -> FeedValidation {
     let url = url.trim();
     let url = match ensure_public_http_url(url) {
         Ok(_) => url,
-        Err(e) => {
-            return FeedValidation {
-                ok: false,
-                title: None,
-                entry_count: 0,
-                error: Some(e.to_string()),
-            }
-        }
+        Err(e) => return invalid(e),
     };
     let client = match http_client() {
         Ok(client) => client,
-        Err(e) => {
-            return FeedValidation {
-                ok: false,
-                title: None,
-                entry_count: 0,
-                error: Some(e.to_string()),
-            }
-        }
+        Err(e) => return invalid(e),
     };
     match client.get(url).send().and_then(|r| r.error_for_status()) {
         Ok(resp) => match read_limited_bytes(resp) {
@@ -196,26 +192,11 @@ pub fn validate_feed_url(url: &str) -> FeedValidation {
                     entry_count: parsed.entries.len(),
                     error: None,
                 },
-                Err(e) => FeedValidation {
-                    ok: false,
-                    title: None,
-                    entry_count: 0,
-                    error: Some(format!("不是有效的 RSS/Atom：{e}")),
-                },
+                Err(e) => invalid(format!("不是有效的 RSS/Atom：{e}")),
             },
-            Err(e) => FeedValidation {
-                ok: false,
-                title: None,
-                entry_count: 0,
-                error: Some(e.to_string()),
-            },
+            Err(e) => invalid(e),
         },
-        Err(e) => FeedValidation {
-            ok: false,
-            title: None,
-            entry_count: 0,
-            error: Some(e.to_string()),
-        },
+        Err(e) => invalid(e),
     }
 }
 

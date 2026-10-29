@@ -57,4 +57,12 @@ article_retention_days: number,
  * name gloss). Off = the reader stays as clean as before; underline
  * still works. Evaluated in the frontend (`isSuperHardWord`).
  */
-show_hard_word_gloss: boolean, };
+show_hard_word_gloss: boolean, 
+/**
+ * Which engine translates the reader text: `auto` (macOS system engine
+ * when usable, API otherwise), `apple` (system engine only — article
+ * text never leaves the Mac), `api` (LLM only). Article blurbs and vocab
+ * enrichment always use the API: they are generative tasks, not
+ * translation.
+ */
+translation_provider: string, };
