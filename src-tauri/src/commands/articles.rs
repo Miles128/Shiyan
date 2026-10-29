@@ -103,19 +103,21 @@ pub async fn translate_plain_text(text: String) -> Result<String, AppError> {
 }
 
 #[tauri::command]
-pub fn mark_article_progress(
-    state: tauri::State<'_, DbState>,
+pub async fn mark_article_progress(
+    app: AppHandle,
     id: String,
     dwell_ms_delta: i64,
     read_completed: bool,
 ) -> Result<(), AppError> {
-    let conn = state.lock_write()?;
-    db::add_article_reading_progress(
-        &conn,
-        &id,
-        dwell_ms_delta,
-        read_completed,
-    )
+    // Called every 15 s while reading and once on completion. A synchronous
+    // command would run on the UI thread and can wait out the write lock
+    // behind a refresh transaction (busy_timeout = 5 s); keep it on the
+    // blocking pool like every other DB command.
+    crate::commands::spawn_db(app, move |state| {
+        let conn = state.lock_write()?;
+        db::add_article_reading_progress(&conn, &id, dwell_ms_delta, read_completed)
+    })
+    .await
 }
 
 #[tauri::command]
