@@ -29,7 +29,7 @@ src/                  React 前端
   annotateText.tsx    按CEFR/词频给难词加下划线
   wordLevels.ts       懒加载内置 CEFR+词频词典(word-levels.json)
   tts.ts/useTts.ts    Web Speech 朗读
-src-tauri/            Cargo workspace（target/ 仍是唯一产物目录）
+src-tauri/            Cargo workspace（产物在共享目录 ~/.cargo/target，不在仓库内）
   src/                壳 crate `shiyan`：只含 Tauri 胶水，不写业务
     lib.rs            应用入口：打开 SQLite(app_data_dir) 注入 DbState(读写双连接)，注册全部 command；commands 直接 `use shiyan_core::…`，无重导出 shim
     commands/         Tauri command 薄层(articles/books/config/feeds/memory/data)：阻塞工作 spawn_blocking，进度走 event("refresh-progress"/"translate-progress")；后台 enrichment 胶水(enrich_memory_background)也在这里。books 三命令：ensure_book_catalog(目录就绪)/search_books(本地搜)/import_book(gid 导入)
@@ -62,13 +62,13 @@ resources/           build.rs 产出的 shiyan-translate 二进制（gitignore�
 - `title_zh`、`tags_json`、`known_words`、`lookup_history`、`removed_feeds` 等旧结构均由迁移删除，不要再往结构体或 SQL 里加回。
 - LLM 配置在 `config.local.json`（gitignore）；无 Key 时翻译功能优雅降级。
 - 正文翻译走**双引擎**：`config.local.json` 的 `translation_provider` = `auto`（默认，系统翻译不可用时回退 API）/ `apple`（仅系统翻译，正文不出本机）/ `api`（仅 LLM）。路由在 `vocab::translate_text` / `translate_texts`；`auto` 模式下系统引擎失败会自动回退 API，`apple` 模式下失败即报错（绝不外发正文）。**标题简介（`translate_article_cards`）与生词释义（`enrich_vocab` / `enrich_phrase`）是生成任务，始终走 API**，系统翻译只做正文翻译。
-- 系统翻译 = Swift helper `shiyan-translate`（`src-tauri/swift/shiyan-translate/main.swift`）调 Apple Translation framework 的无 UI 会话：stdin `{"texts":[...]}` → stdout `{"translations":[...]}`，`--check` 探测可用性。**需要 macOS 26+ 且用户手动装了中英翻译语言包**——程序无法自行下载（`canRequestDownloads` 在非 GUI 上下文恒为 false）。helper 由 `build.rs` 用 `xcrun swiftc` 编译到 `src-tauri/resources/`（gitignore），并复制到 target profile 目录供 dev 使用；打包时经 `bundle.resources` 进 `.app/Contents/Resources/shiyan-translate`。改动 helper 后无需手动编译，`build.rs` 按 mtime 重建。
+- 系统翻译 = Swift helper `shiyan-translate`（`src-tauri/swift/shiyan-translate/main.swift`）调 Apple Translation framework 的无 UI 会话：stdin `{"texts":[...]}` → stdout `{"translations":[...]}`，`--check` 探测可用性。**需要 macOS 26+ 且用户手动装了中英翻译语言包**——程序无法自行下载（`canRequestDownloads` 在非 GUI 上下文恒为 false）。helper 由 `build.rs` 用 `xcrun swiftc` 编译到 `src-tauri/resources/`（gitignore），并复制到 target profile 目录（`~/.cargo/target/<profile>/`）供 dev 使用；打包时经 `bundle.resources` 进 `.app/Contents/Resources/shiyan-translate`。改动 helper 后无需手动编译，`build.rs` 按 mtime 重建。
 
 前端测试约定：vitest 为 node 环境、只收 `src/**/*.test.ts`，测试文件不得拖 react/store 依赖图。可测试的纯逻辑从组件抽出，但**按域归堆**（如 homeDerived/wordResolve），不要一个函数开一个文件；组件内的逻辑要测时抽到域模块而不是建孤儿文件。
 
-开发时少编 Rust：只改 `src/`（排版、划词、样式）用 `pnpm dev`，浏览器看 Vite；`invoke` 不可用，不要在这里测刷新/翻译/入库。改 `src-tauri` 或要真实数据时才 `pnpm dev:desktop`（或 `pnpm tauri dev`）。桌面会话结束执行 `pnpm clean:rust`。
+开发时少编 Rust：只改 `src/`（排版、划词、样式）用 `pnpm dev`，浏览器看 Vite；`invoke` 不可用，不要在这里测刷新/翻译/入库。改 `src-tauri` 或要真实数据时才 `pnpm dev:desktop`（或 `pnpm tauri dev`）。桌面会话结束不需要清理缓存，见文末「开发缓存」。
 
-**跑测试前关掉桌面会话**：`tauri dev` 监听 `src-tauri`，重编译会重启 macOS 窗口并抢焦点。`pnpm test` 的 `pretest` 会自动杀 `tauri dev` / `target/debug/shiyan`（不杀浏览器模式 `pnpm dev`）。手动跑 `cargo test` 前也要先关，或先执行 `node scripts/stop-desktop.mjs`。
+**跑测试前关掉桌面会话**：`tauri dev` 监听 `src-tauri`，重编译会重启 macOS 窗口并抢焦点。`pnpm test` 的 `pretest` 会自动杀 `tauri dev` / `~/.cargo/target/debug/shiyan`（不杀浏览器模式 `pnpm dev`）。手动跑 `cargo test` 前也要先关，或先执行 `node scripts/stop-desktop.mjs`。
 
 Verify before claiming done（一条命令即可；pretest 自动关桌面会话）：
 
@@ -84,6 +84,8 @@ pnpm dev:desktop
 
 注意：非交互 shell 里 cargo 在 `~/.cargo/bin`、pnpm 在 `/opt/homebrew/bin`，不在默认 PATH 时手动加前缀。
 
-开发缓存：`src-tauri/target` 是 Cargo 产物（不入库）。`profile.dev` 只保留本 crate 行号表、依赖不带 debug，避免 `target/debug` 涨到数 GB。不开发时 `pnpm clean:rust`。若启用 Time Machine，排除 `src-tauri/target`（`cargo clean` 会删掉该目录上的排除标记，下次生成后再 `tmutil addexclusion src-tauri/target`）。
+开发缓存：Cargo 产物不在仓库内——`~/.cargo/config.toml` 把 `build.target-dir` 指到共享目录 `~/.cargo/target`，多个 Tauri 项目共用同一份依赖产物（原来每个项目各存一份，合计 6.1 GiB）。`profile.dev` 也由这份配置收窄：只保留本 crate 行号表，依赖 strip 掉 debug。这份配置在本机用户目录，不在仓库里，换机器要自行配置。
+
+⚠ `pnpm clean:rust` 执行的是 `cargo clean`，会把共享目录里**所有项目**的产物一起删掉，重建以小时计。收尾时不要跑；确实需要整体重建再手动执行。若启用 Time Machine，排除 `~/.cargo/target`（`cargo clean` 会删掉该目录上的排除标记，下次生成后再 `tmutil addexclusion ~/.cargo/target`）。
 
 Follow [documents/PRD.md](documents/PRD.md) scope and non-goals.
